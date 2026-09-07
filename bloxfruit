@@ -230,11 +230,11 @@ local function createKaitunHUD()
     sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     sg.Parent = targetParent
 
-    -- Khung chính phong cách Kaitun (rộng rãi, chữ to, đẹp mắt)
+    -- Khung chính phong cách Kaitun (đẹp mắt, nằm gọn phía trên để không che Server Browser)
     local mainFrame = Instance.new("Frame", sg)
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 420, 0, 195)
-    mainFrame.Position = UDim2.new(0.5, -210, 0, 40)
+    mainFrame.Size = UDim2.new(0, 390, 0, 145)
+    mainFrame.Position = UDim2.new(0.5, -195, 0, 8)
     mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
     mainFrame.BackgroundTransparency = 0.15
     mainFrame.BorderSizePixel = 0
@@ -252,48 +252,48 @@ local function createKaitunHUD()
     -- 1. Tiêu đề: Fruit Finder (Font FredokaOne cực đẹp, chuyển 7 màu)
     local title = Instance.new("TextLabel", mainFrame)
     title.Name = "Title"
-    title.Size = UDim2.new(1, 0, 0, 42)
-    title.Position = UDim2.new(0, 0, 0, 8)
+    title.Size = UDim2.new(1, 0, 0, 34)
+    title.Position = UDim2.new(0, 0, 0, 6)
     title.BackgroundTransparency = 1
     title.Text = "Fruit Finder"
     title.TextColor3 = Color3.fromRGB(255, 50, 50)
-    title.TextSize = 28
+    title.TextSize = 25
     title.Font = Enum.Font.FredokaOne
     title.TextXAlignment = Enum.TextXAlignment.Center
 
     -- 2. Status: [ scanning server, taking fruit, hoping server ]
     local statusLabel = Instance.new("TextLabel", mainFrame)
     statusLabel.Name = "Status"
-    statusLabel.Size = UDim2.new(1, -20, 0, 32)
-    statusLabel.Position = UDim2.new(0, 10, 0, 56)
+    statusLabel.Size = UDim2.new(1, -20, 0, 26)
+    statusLabel.Position = UDim2.new(0, 10, 0, 42)
     statusLabel.BackgroundTransparency = 1
     statusLabel.Text = "Status: scanning server"
     statusLabel.TextColor3 = Color3.fromRGB(255, 205, 50)
-    statusLabel.TextSize = 18
+    statusLabel.TextSize = 16
     statusLabel.Font = Enum.Font.FredokaOne
     statusLabel.TextXAlignment = Enum.TextXAlignment.Center
 
     -- 3. Fruit found: [ fruit name ] [ rarity ] hoặc ...
     local fruitLabel = Instance.new("TextLabel", mainFrame)
     fruitLabel.Name = "FruitFound"
-    fruitLabel.Size = UDim2.new(1, -20, 0, 32)
-    fruitLabel.Position = UDim2.new(0, 10, 0, 98)
+    fruitLabel.Size = UDim2.new(1, -20, 0, 26)
+    fruitLabel.Position = UDim2.new(0, 10, 0, 72)
     fruitLabel.BackgroundTransparency = 1
     fruitLabel.Text = "Fruit found: ..."
     fruitLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
-    fruitLabel.TextSize = 17
+    fruitLabel.TextSize = 15
     fruitLabel.Font = Enum.Font.FredokaOne
     fruitLabel.TextXAlignment = Enum.TextXAlignment.Center
 
     -- 4. Time: [ 5m5s hoặc 5h5m5s ]
     local timeLabel = Instance.new("TextLabel", mainFrame)
     timeLabel.Name = "Time"
-    timeLabel.Size = UDim2.new(1, -20, 0, 30)
-    timeLabel.Position = UDim2.new(0, 10, 0, 142)
+    timeLabel.Size = UDim2.new(1, -20, 0, 24)
+    timeLabel.Position = UDim2.new(0, 10, 0, 104)
     timeLabel.BackgroundTransparency = 1
     timeLabel.Text = "Time: 0s"
     timeLabel.TextColor3 = Color3.fromRGB(160, 225, 255)
-    timeLabel.TextSize = 16
+    timeLabel.TextSize = 14
     timeLabel.Font = Enum.Font.FredokaOne
     timeLabel.TextXAlignment = Enum.TextXAlignment.Center
 
@@ -970,49 +970,218 @@ local function getServersViaAPISilent()
     return #out > 0 and out or nil
 end
 
--- 3. Mở Server Browser và spam click từng nút Join trong danh sách
-local function spamJoinInGameBrowser()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return false end
+-- ====================================================================
+-- 3. MỞ REAL SERVER BROWSER TRỰC TIẾP TRÊN MÀN HÌNH & SPAM JOIN SIÊU TỐC
+-- Mở Server Browser THẬT, chọn đúng Sea (Sea 3/2/1), đợi load server rồi spam Join
+-- ====================================================================
 
-    -- Mở Server Browser nếu chưa mở
-    pcall(function()
-        for _, btn in ipairs(pg:GetDescendants()) do
-            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-                local n = btn.Name:lower()
-                local t = btn:IsA("TextButton") and btn.Text:lower() or ""
-                if n == "server" or n == "servers" or n:find("serverbutton") or t == "server" or t == "servers" then
-                    if firesignal then pcall(function() firesignal(btn.MouseButton1Click) end) end
-                    if getconnections then
-                        for _, c in ipairs(getconnections(btn.MouseButton1Click) or {}) do pcall(function() c:Fire() end) end
+-- Tìm Frame Server Browser THẬT trong PlayerGui
+local function findRealServerBrowserFrame()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+
+    for _, lbl in ipairs(pg:GetDescendants()) do
+        if lbl:IsA("TextLabel") and lbl.Text and lbl.Text:lower():find("server browser") then
+            local cur = lbl
+            while cur and cur.Parent and cur.Parent ~= pg and not cur.Parent:IsA("ScreenGui") do
+                if cur:IsA("Frame") and cur.AbsoluteSize.Y > 150 then
+                    return cur
+                end
+                cur = cur.Parent
+            end
+            if cur and cur:IsA("Frame") then
+                return cur
+            end
+        end
+    end
+
+    return pg:FindFirstChild("ServerBrowser", true) or pg:FindFirstChild("Server_Browser", true)
+end
+
+-- Mở Server Browser THẬT trên màn hình (Real, KHÔNG ẩn/invisible)
+local function openRealServerBrowser()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+
+    local browserFrame = findRealServerBrowserFrame()
+
+    -- 1. Bấm nút mở Server trên thanh sidebar bên trái
+    local serverBtn = nil
+    for _, btn in ipairs(pg:GetDescendants()) do
+        if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+            local n = btn.Name:lower()
+            local t = (btn:IsA("TextButton") and btn.Text or ""):lower()
+            if n == "server" or n == "servers" or n == "serverbrowser" or n == "server_browser" 
+               or n:find("serverbutton") or n:find("server_button") or t == "server" or t == "servers" then
+                serverBtn = btn
+                break
+            end
+        end
+    end
+
+    if not serverBtn then
+        -- Tìm cạnh nút Home trên sidebar bên trái
+        for _, parent in ipairs(pg:GetDescendants()) do
+            if parent:IsA("Frame") and (#parent:GetChildren() >= 3 and #parent:GetChildren() <= 8) then
+                local hasHome = false
+                for _, c in ipairs(parent:GetChildren()) do
+                    if c.Name:lower():find("home") then hasHome = true break end
+                end
+                if hasHome then
+                    for _, c in ipairs(parent:GetChildren()) do
+                        if (c:IsA("TextButton") or c:IsA("ImageButton")) and not c.Name:lower():find("home") and not c.Name:lower():find("setting") then
+                            serverBtn = c
+                            break
+                        end
                     end
-                    pcall(function() btn:Activate() end)
-                    break
+                end
+            end
+            if serverBtn then break end
+        end
+    end
+
+    if serverBtn then
+        if firesignal then
+            pcall(function() firesignal(serverBtn.MouseButton1Click) end)
+            pcall(function() firesignal(serverBtn.Activated) end)
+        end
+        if getconnections then
+            for _, ev in ipairs({"MouseButton1Click", "Activated", "MouseButton1Down"}) do
+                local ok, conns = pcall(getconnections, serverBtn[ev])
+                if ok and conns then
+                    for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
                 end
             end
         end
-    end)
+        pcall(function() serverBtn:Activate() end)
+    end
 
-    task.wait(0.4)
-    dismissRobloxErrorPrompt()
+    -- 2. Đảm bảo hiển thị THẬT trên màn hình (Visible = true, hiển thị đầy đủ)
+    if not browserFrame then
+        task.wait(0.3)
+        browserFrame = findRealServerBrowserFrame()
+    end
 
-    -- Quét tất cả các nút Join
+    if browserFrame then
+        pcall(function()
+            browserFrame.Visible = true
+            -- Nếu bị văng ra ngoài màn hình, căn giữa màn hình
+            if browserFrame.Position.X.Scale > 1.5 or browserFrame.Position.X.Offset > 1000 then
+                browserFrame.Position = UDim2.new(0.5, -browserFrame.AbsoluteSize.X / 2, 0.5, -browserFrame.AbsoluteSize.Y / 2)
+            end
+        end)
+    end
+
+    return browserFrame
+end
+
+-- Kích hoạt chọn Sea và đợi server load xong trong Browser
+local function triggerBrowserLoadServers(browserFrame)
+    if not browserFrame then return false end
+
+    -- Xác định Sea hiện tại
+    local targetSea = "Sea 3"
+    if PlaceID == 2753915549 or PlaceID == 85211729168715 then
+        targetSea = "Sea 1"
+    elseif PlaceID == 4442272183 or PlaceID == 79091703265657 then
+        targetSea = "Sea 2"
+    elseif PlaceID == 7449423635 or PlaceID == 100117331123089 then
+        targetSea = "Sea 3"
+    end
+
+    -- Bấm tab Sea tương ứng (Sea 1, Sea 2, Sea 3)
+    for _, btn in ipairs(browserFrame:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Text and btn.Text:lower():find(targetSea:lower()) then
+            pcall(function()
+                if firesignal then firesignal(btn.MouseButton1Click) end
+                if getconnections then
+                    for _, c in ipairs(getconnections(btn.MouseButton1Click) or {}) do c:Fire() end
+                end
+                btn:Activate()
+            end)
+            task.wait(0.2)
+            break
+        end
+    end
+
+    -- Bấm nút Refresh nếu có
+    for _, btn in ipairs(browserFrame:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Text and btn.Text:lower() == "refresh" then
+            pcall(function()
+                if firesignal then firesignal(btn.MouseButton1Click) end
+                if getconnections then
+                    for _, c in ipairs(getconnections(btn.MouseButton1Click) or {}) do c:Fire() end
+                end
+                btn:Activate()
+            end)
+            break
+        end
+    end
+
+    -- Đợi server load xong (chờ cho đến khi có nút Join hoặc Showing > 0)
+    local startWait = tick()
+    while tick() - startWait < 5 do
+        task.wait(0.25)
+        dismissRobloxErrorPrompt()
+
+        -- Đếm số nút Join hiện có
+        local count = 0
+        for _, item in ipairs(browserFrame:GetDescendants()) do
+            if (item:IsA("TextButton") or item:IsA("ImageButton")) and item.Visible ~= false then
+                local t = (item:IsA("TextButton") and item.Text or ""):lower()
+                local n = item.Name:lower()
+                if t == "join" or n == "join" or t:find("join") or n:find("join") then
+                    count = count + 1
+                end
+            end
+        end
+
+        if count > 0 then
+            print(string.format("[AutoHop] Server Browser đã load thành công %d server!", count))
+            return true
+        end
+
+        -- Kiểm tra nhãn "Showing X/? Servers"
+        for _, lbl in ipairs(browserFrame:GetDescendants()) do
+            if lbl:IsA("TextLabel") and lbl.Text then
+                local showingNum = lbl.Text:match("Showing%s*(%d+)%s*/")
+                if showingNum and tonumber(showingNum) and tonumber(showingNum) > 0 then
+                    task.wait(0.3)
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- Quét danh sách Join trong Server Browser THẬT và spam click liên tục
+local function spamJoinRealBrowser()
+    local browserFrame = openRealServerBrowser()
+    if not browserFrame then return false end
+
+    -- Đợi load xong server
+    triggerBrowserLoadServers(browserFrame)
+
+    -- Thu thập tất cả các nút Join trong browserFrame và PlayerGui
     local joinButtons = {}
-    local searchedGuis = {pg}
-    if CoreGui then table.insert(searchedGuis, CoreGui) end
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local roots = {browserFrame}
+    if pg then table.insert(roots, pg) end
 
-    for _, root in ipairs(searchedGuis) do
+    for _, root in ipairs(roots) do
         for _, item in ipairs(root:GetDescendants()) do
             local isJoin = false
             if item:IsA("TextButton") then
                 local t = (item.Text or ""):lower()
                 if t == "join" or t:find("join") then isJoin = true end
             elseif item:IsA("ImageButton") then
-                local n = (item.Name or ""):lower()
+                local n = item.Name:lower()
                 if n == "join" or n:find("join") then isJoin = true end
             end
 
-            if isJoin then
+            if isJoin and item.Visible ~= false then
                 local parent = item.Parent
                 local playing = 0
                 local maxP = 12
@@ -1025,6 +1194,11 @@ local function spamJoinInGameBrowser()
                                 maxP = tonumber(mx) or 12
                                 break
                             end
+                            local pOnly = lbl.Text:match("(%d+)%s*Players") or lbl.Text:match("Players:%s*(%d+)")
+                            if pOnly then
+                                playing = tonumber(pOnly) or 0
+                                break
+                            end
                         end
                     end
                 end
@@ -1034,13 +1208,15 @@ local function spamJoinInGameBrowser()
                 end
             end
         end
+        if #joinButtons > 0 then break end
     end
 
     if #joinButtons == 0 then
+        print("[AutoHop] Chưa load xong nút Join trong Browser, thử lại...")
         return false
     end
 
-    -- Sắp xếp: Ưu tiên server ít người hơn trước (4-9 người) để tránh bị lỗi 772 Server is full
+    -- Sắp xếp: Ưu tiên server ít người nhất trước (4-9 người) để vào ngay không bị lỗi 772
     table.sort(joinButtons, function(a, b)
         if a.playing > 0 and b.playing > 0 then
             return a.playing < b.playing
@@ -1048,13 +1224,13 @@ local function spamJoinInGameBrowser()
         return a.playing > 0
     end)
 
-    print(string.format("[AutoHop] Tìm thấy %d nút Join trong Browser! Bắt đầu spam join...", #joinButtons))
+    print(string.format("[AutoHop] Tìm thấy %d server trong Browser! Bắt đầu SPAM JOIN...", #joinButtons))
 
-    -- Spam click lần lượt từng nút Join
+    -- SPAM JOIN LẦN LƯỢT TỪNG SERVER
     for i, entry in ipairs(joinButtons) do
         local btn = entry.btn
         if btn and btn.Parent then
-            print(string.format("[AutoHop] Spam Join nút %d/%d (%d/%d người)...", i, #joinButtons, entry.playing, entry.maxP))
+            print(string.format("[AutoHop] SPAM JOIN #%d/%d (%d/%d người)...", i, #joinButtons, entry.playing, entry.maxP))
 
             -- Auto-load script khi sang server mới
             pcall(function()
@@ -1064,7 +1240,7 @@ local function spamJoinInGameBrowser()
                 end
             end)
 
-            -- Click nút Join bằng mọi cách
+            -- Click nút Join
             pcall(function()
                 if firesignal then
                     firesignal(btn.MouseButton1Click)
@@ -1091,18 +1267,18 @@ local function spamJoinInGameBrowser()
                 btn:Activate()
             end)
 
-            -- Kiểm tra ngay: Nếu hiện popup 772 -> Bấm OK ngay và chuyển sang nút tiếp theo!
+            -- Phản hồi tức thì: Nếu bị lỗi 772 (Server is full) -> Bấm OK trong 0.05s và sang ngay nút tiếp theo!
             local gotError = false
             for _ = 1, 5 do
                 task.wait(0.08)
                 if dismissRobloxErrorPrompt() then
                     gotError = true
-                    print("[AutoHop] Phát hiện lỗi 772 -> Đã tự bấm OK, chuyển ngay sang server tiếp theo!")
+                    print("[AutoHop] 772 Full Server -> Đã tự bấm OK, chuyển ngay sang nút tiếp theo!")
                     break
                 end
             end
 
-            -- Nếu không dính lỗi 772 ngay, đợi 1.2s xem có chuyển map không
+            -- Nếu không dính lỗi 772 ngay, chờ 1.2s xem có chuyển map không
             if not gotError then
                 task.wait(1.2)
                 if dismissRobloxErrorPrompt() then
@@ -1119,7 +1295,6 @@ end
 local function teleportToJobId(id, playing, maxP)
     HopCache[id] = tick()
 
-    -- Chuẩn bị tự chạy lại script ở server mới
     pcall(function()
         local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
         if q and isfile and isfile("bloxfruitautofruit.lua") then
@@ -1158,14 +1333,14 @@ local function executeServerHop()
     setHUDFruit(nil)
 
     while true do
-        -- ƯU TIÊN 1: Spam click từng nút Join trong Server Browser in-game
-        local browserOk = spamJoinInGameBrowser()
+        -- ƯU TIÊN 1: Mở Real Server Browser trên màn hình và spam click từng nút Join
+        local browserOk = spamJoinRealBrowser()
         if browserOk then
             task.wait(1.2)
             dismissRobloxErrorPrompt()
         end
 
-        -- ƯU TIÊN 2: Quét server qua API và Remote để spam teleport trực tiếp
+        -- ƯU TIÊN 2: Quét server qua API và Remote để spam teleport trực tiếp nếu browser chưa xong
         local candidates = {}
 
         local apiServers = getServersViaAPISilent()
@@ -1193,17 +1368,15 @@ local function executeServerHop()
         table.sort(viable, function(a, b) return a.playing < b.playing end)
 
         if #viable > 0 then
-            print(string.format("[AutoHop] Tìm thấy %d server khả dụng từ API/Remote. Bắt đầu spam teleport...", #viable))
+            print(string.format("[AutoHop] Thử %d server từ API/Remote...", #viable))
             for i, srv in ipairs(viable) do
                 print(string.format("[AutoHop] Đang hop vào server %d/%d (%d/%d người)...", i, #viable, srv.playing, srv.maxP))
                 local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
                 if not ok then
-                    -- Bị 772 và đã bấm OK -> Lập tức thử server tiếp theo
                     dismissRobloxErrorPrompt()
                 end
             end
         else
-            -- Đã thử hết cache -> Xóa cache và bắt đầu lại
             HopCache = { [game.JobId] = tick() }
             getgenv().BFHopCache = HopCache
         end
