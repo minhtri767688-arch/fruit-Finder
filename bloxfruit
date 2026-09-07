@@ -1,0 +1,1290 @@
+-- ====================================================================
+-- 🍎 BLOX FRUITS - AUTO FRUIT HUNTER & SERVER HOP (KAITUN HUD UI)
+-- Kết hợp: Fruit Finder + Instant Snatch + Auto Store + Stealth Auto Hop
+-- ====================================================================
+
+local Players           = game:GetService("Players")
+local Workspace         = game:GetService("Workspace")
+local TweenService       = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService   = game:GetService("TeleportService")
+local HttpService       = game:GetService("HttpService")
+local RunService        = game:GetService("RunService")
+local CoreGui           = game:GetService("CoreGui")
+local GuiService        = game:GetService("GuiService")
+local LocalPlayer       = Players.LocalPlayer
+local PlaceID           = game.PlaceId
+
+local serverStartTime   = tick()
+
+-- Cache lưu JobId để tránh hop lại server cũ
+if not getgenv().BFHopCache then getgenv().BFHopCache = {} end
+local HopCache = getgenv().BFHopCache
+HopCache[game.JobId] = tick()
+
+local CONFIG = {
+    MinPlayers  = 2,   -- Tối ưu tốc độ: 2 - 10 người (tránh server 11-12 người bị full 772)
+    MaxPlayers  = 10,
+    HopInterval = 1,   -- Thử lại tức thì 1s
+}
+
+-- ====================================================================
+-- 🚨 HỆ THỐNG TỰ ĐỘNG BẤM "OK" KHI BỊ LỖI ROBLOX (ERROR 772, 773, TELEPORT FAILED)
+-- Tự động bấm OK ngay lập tức khi xuất hiện popup "Server is full (772)"
+-- ====================================================================
+local function dismissRobloxErrorPrompt()
+    local didDismiss = false
+
+    -- 1. GuiService:ClearError()
+    pcall(function()
+        if GuiService and GuiService.ClearError then
+            GuiService:ClearError()
+        end
+    end)
+
+    -- 2. Quét CoreGui.RobloxPromptGui.promptOverlay
+    pcall(function()
+        local robloxPromptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+        if not robloxPromptGui then return end
+        local promptOverlay = robloxPromptGui:FindFirstChild("promptOverlay")
+        if not promptOverlay then return end
+
+        for _, prompt in ipairs(promptOverlay:GetChildren()) do
+            for _, btn in ipairs(prompt:GetDescendants()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    local txt = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                    local name = btn.Name:lower()
+
+                    -- Bấm nút OK / Confirm / Button / Leave
+                    if txt:find("ok") or name:find("ok") or name:find("confirm") or name:find("button") or txt:find("leave") or #prompt:GetChildren() <= 3 then
+                        -- Method A: firesignal
+                        if firesignal then
+                            pcall(function() firesignal(btn.MouseButton1Click) end)
+                            pcall(function() firesignal(btn.MouseButton1Down) end)
+                            pcall(function() firesignal(btn.MouseButton1Up) end)
+                            pcall(function() firesignal(btn.Activated) end)
+                        end
+
+                        -- Method B: getconnections
+                        if getconnections then
+                            for _, ev in ipairs({"MouseButton1Click", "Activated", "MouseButton1Down", "MouseButton1Up"}) do
+                                local ok, conns = pcall(getconnections, btn[ev])
+                                if ok and conns then
+                                    for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
+                                end
+                            end
+                        end
+
+                        -- Method C: VirtualInputManager (click chuột ảo)
+                        pcall(function()
+                            local vim = game:GetService("VirtualInputManager")
+                            if vim and btn.AbsolutePosition and btn.AbsoluteSize then
+                                local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2
+                                vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+                                vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+                            end
+                        end)
+
+                        -- Method D: Activate trực tiếp
+                        pcall(function() btn:Activate() end)
+
+                        didDismiss = true
+                    end
+                end
+            end
+        end
+    end)
+
+    return didDismiss
+end
+
+-- Bấm OK ngay khi vừa load script (nếu màn hình đang bị kẹt sẵn lỗi 772)
+dismissRobloxErrorPrompt()
+
+-- Lắng nghe sự kiện khi Roblox tạo ErrorPrompt mới
+pcall(function()
+    local promptGui = CoreGui:FindFirstChild("RobloxPromptGui") or CoreGui:WaitForChild("RobloxPromptGui", 5)
+    if promptGui then
+        local overlay = promptGui:FindFirstChild("promptOverlay") or promptGui:WaitForChild("promptOverlay", 5)
+        if overlay then
+            overlay.ChildAdded:Connect(function(child)
+                task.wait(0.03)
+                dismissRobloxErrorPrompt()
+            end)
+        end
+    end
+end)
+
+-- Lắng nghe sự kiện TeleportInitFailed
+TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+    if player == LocalPlayer then
+        print("[AutoHop] TeleportInitFailed: " .. tostring(errorMessage) .. ". Đang bấm OK & thử server khác...")
+        task.wait(0.05)
+        dismissRobloxErrorPrompt()
+    end
+end)
+
+-- Vòng lặp nền quét liên tục mỗi 0.1s đảm bảo không bao giờ bị kẹt popup
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        dismissRobloxErrorPrompt()
+    end
+end)
+
+-- ====================================================================
+-- BẢNG TRA CỨU ĐỘ HIẾM & MÀU SẮC (FRUIT DATABASE)
+-- ====================================================================
+local FruitDatabase = {
+    -- ⚪ COMMON
+    ["rocket"]    = { Display = "Rocket", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["spin"]      = { Display = "Spin", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["blade"]     = { Display = "Blade (Chop)", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["chop"]      = { Display = "Chop", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["spring"]    = { Display = "Spring", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["bomb"]      = { Display = "Bomb", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["smoke"]     = { Display = "Smoke", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+    ["spike"]     = { Display = "Spike", Rarity = "Common", Color = Color3.fromRGB(180, 180, 180) },
+
+    -- 🔵 RARE
+    ["flame"]     = { Display = "Flame", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["ice"]       = { Display = "Ice", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["sand"]      = { Display = "Sand", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["dark"]      = { Display = "Dark", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["eagle"]     = { Display = "Eagle (Falcon)", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["falcon"]    = { Display = "Falcon", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+    ["diamond"]   = { Display = "Diamond", Rarity = "Rare", Color = Color3.fromRGB(40, 160, 255) },
+
+    -- 🟣 EPIC
+    ["light"]     = { Display = "Light", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["rubber"]    = { Display = "Rubber", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["ghost"]     = { Display = "Ghost", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["revive"]    = { Display = "Revive (Ghost)", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["magma"]     = { Display = "Magma", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["quake"]     = { Display = "Quake", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["buddha"]    = { Display = "Buddha", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["love"]      = { Display = "Love", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["spider"]    = { Display = "Spider (String)", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["string"]    = { Display = "String", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["sound"]     = { Display = "Sound", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+    ["phoenix"]   = { Display = "Phoenix", Rarity = "Epic", Color = Color3.fromRGB(185, 70, 255) },
+
+    -- 🌸 LEGENDARY
+    ["creation"]  = { Display = "Creation (Barrier)", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["barrier"]   = { Display = "Barrier", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["portal"]    = { Display = "Portal (Door)", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["door"]      = { Display = "Door", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["lightning"] = { Display = "Lightning (Rumble)", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["rumble"]    = { Display = "Rumble", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["pain"]      = { Display = "Pain (Paw)", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["paw"]       = { Display = "Paw", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["blizzard"]  = { Display = "Blizzard", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["gravity"]   = { Display = "Gravity", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["mammoth"]   = { Display = "Mammoth", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["shadow"]    = { Display = "Shadow", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["venom"]     = { Display = "Venom", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["gas"]       = { Display = "Gas", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+    ["control"]   = { Display = "Control", Rarity = "Legendary", Color = Color3.fromRGB(255, 105, 180) },
+
+    -- 🔴 MYTHICAL
+    ["spirit"]    = { Display = "Spirit (Soul)", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["soul"]      = { Display = "Soul", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["leopard"]   = { Display = "Leopard", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["yeti"]      = { Display = "Yeti", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["kitsune"]   = { Display = "Kitsune", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["dragon"]    = { Display = "Dragon", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["t-rex"]     = { Display = "T-Rex", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["trex"]      = { Display = "T-Rex", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+    ["dough"]     = { Display = "Dough", Rarity = "Mythical", Color = Color3.fromRGB(255, 45, 45) },
+}
+
+local BlacklistedTerms = {
+    "dealer", "gacha", "shop", "seller", "buyer", "vendor",
+    "remove", "remover", "box", "spawn", "quest", "cousin",
+    "zioles", "trevor", "tort", "awakening", "customizer",
+    "raid", "npc", "master", "fruitshop", "fruittrader",
+    "inventory", "storage", "dummy", "boss", "enemy",
+    "location", "island", "door", "teleport"
+}
+
+-- ====================================================================
+-- GIAO DIỆN KAITUN HUD OVERLAY
+-- ====================================================================
+local function createKaitunHUD()
+    local targetParent = LocalPlayer:WaitForChild("PlayerGui")
+    pcall(function()
+        if CoreGui then
+            local test = Instance.new("Folder", CoreGui)
+            test:Destroy()
+            targetParent = CoreGui
+        end
+    end)
+
+    -- Xóa UI cũ nếu có
+    local old = targetParent:FindFirstChild("KaitunFruitHUD") or LocalPlayer.PlayerGui:FindFirstChild("KaitunFruitHUD")
+    if old then old:Destroy() end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "KaitunFruitHUD"
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.Parent = targetParent
+
+    -- Khung chính phong cách Kaitun (rộng rãi, chữ to, đẹp mắt)
+    local mainFrame = Instance.new("Frame", sg)
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 420, 0, 195)
+    mainFrame.Position = UDim2.new(0.5, -210, 0, 40)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+    mainFrame.BackgroundTransparency = 0.15
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+
+    local corner = Instance.new("UICorner", mainFrame)
+    corner.CornerRadius = UDim.new(0, 14)
+
+    local stroke = Instance.new("UIStroke", mainFrame)
+    stroke.Color = Color3.fromRGB(255, 45, 45)
+    stroke.Thickness = 2
+    stroke.Transparency = 0.05
+
+    -- 1. Tiêu đề: Fruit Finder (Font FredokaOne cực đẹp, chuyển 7 màu)
+    local title = Instance.new("TextLabel", mainFrame)
+    title.Name = "Title"
+    title.Size = UDim2.new(1, 0, 0, 42)
+    title.Position = UDim2.new(0, 0, 0, 8)
+    title.BackgroundTransparency = 1
+    title.Text = "Fruit Finder"
+    title.TextColor3 = Color3.fromRGB(255, 50, 50)
+    title.TextSize = 28
+    title.Font = Enum.Font.FredokaOne
+    title.TextXAlignment = Enum.TextXAlignment.Center
+
+    -- 2. Status: [ scanning server, taking fruit, hoping server ]
+    local statusLabel = Instance.new("TextLabel", mainFrame)
+    statusLabel.Name = "Status"
+    statusLabel.Size = UDim2.new(1, -20, 0, 32)
+    statusLabel.Position = UDim2.new(0, 10, 0, 56)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "Status: scanning server"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 205, 50)
+    statusLabel.TextSize = 18
+    statusLabel.Font = Enum.Font.FredokaOne
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+    -- 3. Fruit found: [ fruit name ] [ rarity ] hoặc ...
+    local fruitLabel = Instance.new("TextLabel", mainFrame)
+    fruitLabel.Name = "FruitFound"
+    fruitLabel.Size = UDim2.new(1, -20, 0, 32)
+    fruitLabel.Position = UDim2.new(0, 10, 0, 98)
+    fruitLabel.BackgroundTransparency = 1
+    fruitLabel.Text = "Fruit found: ..."
+    fruitLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
+    fruitLabel.TextSize = 17
+    fruitLabel.Font = Enum.Font.FredokaOne
+    fruitLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+    -- 4. Time: [ 5m5s hoặc 5h5m5s ]
+    local timeLabel = Instance.new("TextLabel", mainFrame)
+    timeLabel.Name = "Time"
+    timeLabel.Size = UDim2.new(1, -20, 0, 30)
+    timeLabel.Position = UDim2.new(0, 10, 0, 142)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.Text = "Time: 0s"
+    timeLabel.TextColor3 = Color3.fromRGB(160, 225, 255)
+    timeLabel.TextSize = 16
+    timeLabel.Font = Enum.Font.FredokaOne
+    timeLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+    -- HIỆU ỨNG CHUYỂN ĐỔI 7 MÀU RAINBOW (RED -> ORANGE -> YELLOW -> GREEN -> BLUE -> PURPLE)
+    task.spawn(function()
+        local hue = 0
+        while true do
+            task.wait(0.03)
+            hue = (hue + 0.006) % 1
+            local rainbow = Color3.fromHSV(hue, 0.85, 1)
+            pcall(function()
+                title.TextColor3 = rainbow
+                stroke.Color = rainbow
+            end)
+        end
+    end)
+
+    return {
+        Gui = sg,
+        Status = statusLabel,
+        Fruit = fruitLabel,
+        Time = timeLabel
+    }
+end
+
+local HUD = createKaitunHUD()
+
+-- ====================================================================
+-- TỰ ĐỘNG CHỌN TEAM MARINES KHI JOIN GAME
+-- ====================================================================
+local function autoSelectMarines()
+    if LocalPlayer.Team and tostring(LocalPlayer.Team) == "Marines" then
+        return true
+    end
+
+    -- 1. Gọi trực tiếp Remote SetTeam của Blox Fruits
+    pcall(function()
+        local rem = ReplicatedStorage:FindFirstChild("Remotes")
+        local commF = rem and rem:FindFirstChild("CommF_")
+        if commF then
+            commF:InvokeServer("SetTeam", "Marines")
+        end
+    end)
+
+    -- 2. Click nút Marines trên giao diện (nếu bảng Pick A Side đang mở)
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg then
+            for _, btn in ipairs(pg:GetDescendants()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    local name = btn.Name:lower()
+                    local text = btn:IsA("TextButton") and btn.Text:lower() or ""
+                    if name:find("marine") or text:find("marine") then
+                        if getconnections then
+                            for _, ev in ipairs({"Activated", "MouseButton1Click"}) do
+                                local ok, conns = pcall(getconnections, btn[ev])
+                                if ok and conns then
+                                    for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
+                                end
+                            end
+                        end
+                        pcall(function() btn:Activate() end)
+                    end
+                end
+            end
+        end
+    end)
+
+    task.wait(0.4)
+    return (LocalPlayer.Team and tostring(LocalPlayer.Team) == "Marines")
+end
+
+-- Định dạng thời gian: 5s, 5m5s, 5h5m5s
+local function formatTime(seconds)
+    local h = math.floor(seconds / 3600)
+    local m = math.floor((seconds % 3600) / 60)
+    local s = math.floor(seconds % 60)
+    if h > 0 then
+        return string.format("%dh%dm%ds", h, m, s)
+    elseif m > 0 then
+        return string.format("%dm%ds", m, s)
+    else
+        return string.format("%ds", s)
+    end
+end
+
+-- Cập nhật đồng hồ thời gian thực mỗi giây
+task.spawn(function()
+    while true do
+        task.wait(1)
+        local elapsed = tick() - serverStartTime
+        pcall(function()
+            HUD.Time.Text = "Time: " .. formatTime(elapsed)
+        end)
+    end
+end)
+
+-- Hàm cập nhật trạng thái HUD (chỉ 3 trạng thái theo đúng yêu cầu)
+local function setHUDStatus(state)
+    -- state: "scanning server" | "taking fruit" | "hoping server"
+    pcall(function()
+        if state == "taking fruit" then
+            HUD.Status.Text = "Status: taking fruit"
+            HUD.Status.TextColor3 = Color3.fromRGB(70, 255, 120) -- Green
+        elseif state == "hoping server" then
+            HUD.Status.Text = "Status: hoping server"
+            HUD.Status.TextColor3 = Color3.fromRGB(80, 200, 255) -- Cyan Blue
+        else
+            HUD.Status.Text = "Status: scanning server"
+            HUD.Status.TextColor3 = Color3.fromRGB(255, 200, 50) -- Yellow
+        end
+    end)
+end
+
+-- Hàm cập nhật quả tìm thấy
+local function setHUDFruit(fruitInfo)
+    pcall(function()
+        if not fruitInfo then
+            HUD.Fruit.Text = "Fruit found: ..."
+            HUD.Fruit.TextColor3 = Color3.fromRGB(200, 200, 200)
+        else
+            local name = fruitInfo.DisplayName or "Fruit"
+            local rarity = fruitInfo.Rarity or "Common"
+            HUD.Fruit.Text = string.format("Fruit found: %s [%s]", name, rarity)
+            if fruitInfo.Color then
+                HUD.Fruit.TextColor3 = fruitInfo.Color
+            else
+                HUD.Fruit.TextColor3 = Color3.fromRGB(255, 215, 0)
+            end
+        end
+    end)
+end
+
+-- ====================================================================
+-- HỆ THỐNG NHẬN DIỆN & PHÁT HIỆN FRUIT TRONG MAP
+-- ====================================================================
+local function isFruitObject(obj)
+    if not obj or not obj.Parent then return false end
+    local name = string.lower(obj.Name)
+
+    for _, bad in ipairs(BlacklistedTerms) do
+        if string.find(name, bad) then return false end
+    end
+
+    if obj:IsA("Tool") then
+        local handle = obj:FindFirstChild("Handle")
+        if not handle then return false end
+        if obj.Parent and obj.Parent:FindFirstChildOfClass("Humanoid") and obj.Parent ~= LocalPlayer.Character then
+            return false
+        end
+        if string.find(name, "fruit") or obj.ToolTip == "Blox Fruit" or obj:FindFirstChild("EatRemote") or obj:GetAttribute("OriginalName") then
+            return true
+        end
+        for key, _ in pairs(FruitDatabase) do
+            if string.find(name, key) then return true end
+        end
+    end
+
+    if obj:IsA("Model") or obj:IsA("BasePart") then
+        if obj:GetAttribute("OriginalName") then return true end
+        if string.find(name, "fruit") then
+            local handle = obj:FindFirstChild("Handle") or (obj:IsA("BasePart") and obj) or obj.PrimaryPart
+            if handle and handle:IsA("BasePart") then return true end
+        end
+    end
+
+    return false
+end
+
+local function identifyFruit(obj)
+    if not obj then return nil end
+    local candidates = {}
+    if obj.Name then table.insert(candidates, tostring(obj.Name)) end
+
+    pcall(function()
+        local orig = obj:GetAttribute("OriginalName") or obj:GetAttribute("FruitName") or obj:GetAttribute("Fruit")
+        if orig then table.insert(candidates, tostring(orig)) end
+    end)
+
+    for _, child in ipairs(obj:GetChildren()) do
+        if child.Name and child.Name ~= "Handle" and child.Name ~= "TouchInterest" and not string.find(child.Name, "ESP") then
+            table.insert(candidates, tostring(child.Name))
+        end
+        pcall(function()
+            local childOrig = child:GetAttribute("OriginalName") or child:GetAttribute("FruitName")
+            if childOrig then table.insert(candidates, tostring(childOrig)) end
+        end)
+    end
+
+    for _, candidate in ipairs(candidates) do
+        local str = string.lower(candidate)
+        str = string.gsub(str, "fruit", "")
+        str = string.gsub(str, "blox", "")
+        str = string.gsub(str, "%-.*", "")
+        str = string.gsub(str, "%s+", "")
+
+        for key, data in pairs(FruitDatabase) do
+            if string.find(str, key) or string.find(string.lower(candidate), key) then
+                return {
+                    Key = key,
+                    DisplayName = data.Display .. " Fruit",
+                    Rarity = data.Rarity,
+                    Color = data.Color,
+                }
+            end
+        end
+    end
+
+    local rawName = string.gsub(obj.Name, "^%s*(.-)%s*$", "%1")
+    if string.lower(rawName) == "fruit" or string.lower(rawName) == "fruit " then
+        return {
+            Key = "fruit",
+            DisplayName = "Devil Fruit",
+            Rarity = "Rare",
+            Color = Color3.fromRGB(40, 160, 255),
+        }
+    end
+
+    return {
+        Key = string.lower(rawName),
+        DisplayName = rawName,
+        Rarity = "Common",
+        Color = Color3.fromRGB(200, 200, 200),
+    }
+end
+
+local function getFruitRoot(obj)
+    if not obj then return nil end
+    if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
+        return obj.Handle
+    elseif obj:IsA("Model") then
+        return obj.PrimaryPart or obj:FindFirstChild("Handle") or obj:FindFirstChildOfClass("BasePart")
+    elseif obj:IsA("BasePart") then
+        return obj
+    end
+    return nil
+end
+
+local function scanAllFruits()
+    local fruits = {}
+    local added = {}
+
+    local function checkAndAdd(obj)
+        if not obj or added[obj] then return end
+        if isFruitObject(obj) then
+            local root = getFruitRoot(obj)
+            if root and root:IsA("BasePart") then
+                added[obj] = true
+                local info = identifyFruit(obj)
+                table.insert(fruits, {
+                    Object = obj,
+                    RootPart = root,
+                    Info = info,
+                    Name = info.DisplayName,
+                    Rarity = info.Rarity,
+                })
+            end
+        end
+    end
+
+    for _, child in ipairs(Workspace:GetChildren()) do
+        checkAndAdd(child)
+    end
+
+    for _, folderName in ipairs({"Fruit", "Drops", "Fruits", "Chest"}) do
+        local folder = Workspace:FindFirstChild(folderName)
+        if folder then
+            for _, child in ipairs(folder:GetChildren()) do
+                checkAndAdd(child)
+            end
+        end
+    end
+
+    return fruits
+end
+
+-- ====================================================================
+-- HỆ THỐNG CẤT TRÁI VÀO KHO (STORE FRUIT)
+-- ====================================================================
+local function storeAllInventoryFruits()
+    local stored = 0
+    pcall(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local commF = remotes and remotes:FindFirstChild("CommF_")
+        if not commF then return end
+
+        if LocalPlayer:FindFirstChild("Backpack") then
+            for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
+                local eatRemote = item:FindFirstChild("EatRemote", true)
+                if eatRemote or string.find(string.lower(item.Name), "fruit") then
+                    local origName = item:GetAttribute("OriginalName") or item.Name
+                    commF:InvokeServer("StoreFruit", origName, item)
+                    stored = stored + 1
+                end
+            end
+        end
+
+        if LocalPlayer.Character then
+            for _, item in ipairs(LocalPlayer.Character:GetChildren()) do
+                local eatRemote = item:FindFirstChild("EatRemote", true)
+                if eatRemote or (item:IsA("Tool") and string.find(string.lower(item.Name), "fruit")) then
+                    local origName = item:GetAttribute("OriginalName") or item.Name
+                    commF:InvokeServer("StoreFruit", origName, item)
+                    stored = stored + 1
+                end
+            end
+        end
+    end)
+    return stored
+end
+
+-- ====================================================================
+-- HỆ THỐNG THU THẬP FRUIT THÔNG MINH (HÚT + BAY + RESET ĐẢO NẾU Ở XA)
+-- ====================================================================
+local noclipConnection = nil
+
+local function startNoClip()
+    if noclipConnection then noclipConnection:Disconnect() end
+    noclipConnection = RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+local function stopNoClip()
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+    end
+end
+
+local function getIslandForPosition(targetPos)
+    local worldOrigin = Workspace:FindFirstChild("_WorldOrigin")
+    if not worldOrigin or not worldOrigin:FindFirstChild("Locations") then return nil, 999999 end
+
+    local nearestLoc = nil
+    local minDistance = 999999
+
+    for _, loc in ipairs(worldOrigin.Locations:GetChildren()) do
+        local locPos = loc:IsA("BasePart") and loc.Position or loc:GetPivot().Position
+        local dist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(locPos.X, 0, locPos.Z)).Magnitude
+        if dist < minDistance then
+            minDistance = dist
+            nearestLoc = loc
+        end
+    end
+
+    return nearestLoc, minDistance
+end
+
+-- Hàm hút trái tại chỗ (chỉ hiệu quả khi ở gần hoặc cùng đảo)
+local function trySnatchHere(fruitData)
+    if not fruitData or not fruitData.Object then return false end
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+    local hrp = char.HumanoidRootPart
+    local targetPart = fruitData.RootPart or getFruitRoot(fruitData.Object)
+    if not targetPart then return false end
+
+    pcall(function()
+        if targetPart:IsA("BasePart") then
+            targetPart.CFrame = hrp.CFrame
+        end
+        if fruitData.Object:IsA("Tool") and fruitData.Object:FindFirstChild("Handle") then
+            fruitData.Object.Handle.CFrame = hrp.CFrame
+        end
+    end)
+
+    if firetouchinterest then
+        pcall(function()
+            firetouchinterest(hrp, targetPart, 0)
+        end)
+    end
+
+    if fruitData.Object:IsA("Tool") and char:FindFirstChildOfClass("Humanoid") then
+        pcall(function()
+            char.Humanoid:EquipTool(fruitData.Object)
+        end)
+    end
+
+    task.wait(0.2)
+    storeAllInventoryFruits()
+
+    local isCollected = (fruitData.Object.Parent == LocalPlayer.Backpack) or
+                        (LocalPlayer.Character and fruitData.Object.Parent == LocalPlayer.Character) or
+                        (not fruitData.Object.Parent or fruitData.Object.Parent ~= Workspace)
+    return isCollected
+end
+
+-- Hàm khôi phục nhân vật về trạng thái di chuyển bình thường (chống đơ/đứng im)
+local function restoreCharacterMovement()
+    stopNoClip()
+    pcall(function()
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hum then
+                hum.PlatformStand = false
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+            if hrp then
+                for _, item in ipairs(hrp:GetChildren()) do
+                    if item:IsA("BodyVelocity") or item:IsA("BodyGyro") or item:IsA("BodyPosition") then
+                        item:Destroy()
+                    end
+                end
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+    end)
+end
+
+-- Hàm bay NoClip an toàn (có khôi phục nhân vật, không bao giờ bị lỗi)
+local function safeFlyTo(hrp, targetCFrame, duration)
+    startNoClip()
+    local success = pcall(function()
+        local tween = TweenService:Create(hrp, TweenInfo.new(duration, Enum.EasingStyle.Linear), { CFrame = targetCFrame })
+        tween:Play()
+        tween.Completed:Wait()
+    end)
+    if not success then
+        hrp.CFrame = targetCFrame
+        task.wait(0.1)
+    end
+    stopNoClip()
+end
+
+-- Hàm thu thập quả thông minh (Tận dụng Bug Fly 0.35s -> Stop Fly -> Hút Quả)
+local function smartTakeAndStoreFruit(fruitData)
+    if not fruitData or not fruitData.Object then
+        restoreCharacterMovement()
+        return false
+    end
+
+    local targetPart = fruitData.RootPart or getFruitRoot(fruitData.Object)
+    if not targetPart then
+        restoreCharacterMovement()
+        return false
+    end
+
+    local fruitPos = targetPart.Position
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        restoreCharacterMovement()
+        return false
+    end
+
+    local hrp = char.HumanoidRootPart
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local dist = (hrp.Position - fruitPos).Magnitude
+
+    -- ====================================================================
+    -- BƯỚC 1: TẬN DỤNG BUG (FLY 0.35s VỀ HƯỚNG QUẢ -> STOP FLY -> HÚT QUẢ)
+    -- Thao tác chuẩn: Lao về hướng quả rồi dừng ngay lập tức để hút
+    -- ====================================================================
+    startNoClip()
+    local okTween, tw = pcall(function()
+        return TweenService:Create(hrp, TweenInfo.new(0.35, Enum.EasingStyle.Linear), { CFrame = CFrame.new(fruitPos) })
+    end)
+    if okTween and tw then
+        tw:Play()
+        task.wait(0.35)
+        tw:Cancel() -- Dừng bay tức thì
+    end
+    stopNoClip()
+    restoreCharacterMovement()
+
+    -- Hút quả về phía trước mặt nhân vật & kích hoạt Touch
+    for _ = 1, 4 do
+        pcall(function()
+            if targetPart and targetPart:IsA("BasePart") then
+                targetPart.CFrame = hrp.CFrame * CFrame.new(0, 0, -1.5)
+                targetPart.AssemblyLinearVelocity = Vector3.zero
+                targetPart.AssemblyAngularVelocity = Vector3.zero
+            end
+            if fruitData.Object:IsA("Tool") and fruitData.Object:FindFirstChild("Handle") then
+                fruitData.Object.Handle.CFrame = hrp.CFrame * CFrame.new(0, 0, -1.5)
+                fruitData.Object.Handle.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+
+        if firetouchinterest then
+            pcall(function()
+                firetouchinterest(hrp, targetPart, 0)
+            end)
+        end
+
+        if fruitData.Object:IsA("Tool") and hum then
+            pcall(function()
+                hum:EquipTool(fruitData.Object)
+            end)
+        end
+        task.wait(0.05)
+    end
+
+    if firetouchinterest then
+        pcall(function() firetouchinterest(hrp, targetPart, 1) end)
+    end
+
+    task.wait(0.2)
+    storeAllInventoryFruits()
+
+    -- Kiểm tra xem quả đã vào túi chưa
+    local isCollected = (fruitData.Object.Parent == LocalPlayer.Backpack) or
+                        (LocalPlayer.Character and fruitData.Object.Parent == LocalPlayer.Character) or
+                        (not fruitData.Object.Parent or fruitData.Object.Parent ~= Workspace)
+
+    if isCollected then
+        restoreCharacterMovement()
+        return true
+    end
+
+    -- ====================================================================
+    -- BƯỚC 2: DỰ PHÒNG NẾU BUG CHƯA KỊP NHẬN (BAY TỚI GẦN ĐỂ NHẶT TRỰC TIẾP)
+    -- ====================================================================
+    if fruitData.Object.Parent == Workspace then
+        -- Nếu ở xa đảo khác (> 800 studs): Fast Island TP & Reset
+        if dist > 800 then
+            local targetIsland, islandDist = getIslandForPosition(fruitPos)
+            local islandPos = targetIsland and (targetIsland:IsA("BasePart") and targetIsland.Position or targetIsland:GetPivot().Position) or fruitPos
+            local approachPos = islandPos + Vector3.new(0, 50, 0)
+            local flyDuration = math.clamp(dist / 400, 0.4, 3.2)
+
+            safeFlyTo(hrp, CFrame.new(approachPos), flyDuration)
+            pcall(function() if hum then hum.Health = 0 end end)
+
+            local newChar = LocalPlayer.CharacterAdded:Wait()
+            repeat task.wait(0.1) until newChar and newChar:FindFirstChild("HumanoidRootPart") and newChar:FindFirstChildOfClass("Humanoid")
+            task.wait(0.5)
+
+            char = newChar
+            hrp = newChar.HumanoidRootPart
+            hum = newChar:FindFirstChildOfClass("Humanoid")
+        end
+
+        -- Bay ngắn tới sát vị trí quả
+        if targetPart and targetPart.Parent and fruitData.Object.Parent == Workspace then
+            local targetCFrame = CFrame.new(targetPart.Position + Vector3.new(0, 1.5, 0))
+            local curDist = (hrp.Position - targetPart.Position).Magnitude
+            local flyTime = math.clamp(curDist / 300, 0.2, 3.5)
+
+            safeFlyTo(hrp, targetCFrame, flyTime)
+            restoreCharacterMovement()
+
+            for retry = 1, 3 do
+                if not fruitData.Object or fruitData.Object.Parent ~= Workspace then break end
+
+                pcall(function()
+                    hrp.CFrame = CFrame.new(targetPart.Position)
+                    targetPart.CFrame = hrp.CFrame
+                end)
+
+                if firetouchinterest then
+                    pcall(function() firetouchinterest(hrp, targetPart, 0) end)
+                end
+
+                if fruitData.Object:IsA("Tool") and hum then
+                    pcall(function() hum:EquipTool(fruitData.Object) end)
+                end
+
+                task.wait(0.2)
+                storeAllInventoryFruits()
+            end
+        end
+    end
+
+    restoreCharacterMovement()
+    local isDone = (not fruitData.Object or not fruitData.Object.Parent or fruitData.Object.Parent ~= Workspace)
+    return isDone
+end
+
+-- ====================================================================
+-- HỆ THỐNG SERVER HOP SIÊU TỐC & SPAM JOIN BROWSER (CHỐNG LỖI 772)
+-- Tự động spam bấm từng nút Join trong Server Browser
+-- Nếu gặp lỗi 772 (Server is full) -> Tự động bấm OK ngay và spam nút tiếp theo
+-- ====================================================================
+
+-- 1. Lấy server qua __ServerBrowser Remote (ngầm)
+local function getServersViaRemoteSilent()
+    local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+    if not sb then return nil end
+
+    local curJob = game.JobId
+    local validServers = {}
+
+    for page = 1, 5 do
+        local ok, res = pcall(function()
+            return sb:InvokeServer(page)
+        end)
+
+        if ok and type(res) == "table" and next(res) ~= nil then
+            for jobId, data in pairs(res) do
+                local id = tostring(jobId)
+                local playing = 0
+                local maxP = 12
+
+                if type(data) == "table" then
+                    playing = tonumber(data.Count or data.Players or data.playing or 0) or 0
+                    maxP = tonumber(data.MaxPlayers or data.maxPlayers or 12) or 12
+                elseif type(data) == "number" then
+                    playing = data
+                end
+
+                if id ~= "" and id ~= curJob and playing >= CONFIG.MinPlayers and playing <= CONFIG.MaxPlayers and playing < maxP then
+                    local ct = HopCache[id]
+                    if not ct or (tick() - ct > 300) then
+                        table.insert(validServers, {id = id, playing = playing, maxP = maxP})
+                    end
+                end
+            end
+            if #validServers >= 8 then break end
+        end
+        task.wait(0.15)
+    end
+
+    return #validServers > 0 and validServers or nil
+end
+
+-- 2. Lấy server qua Roblox Public API (ngầm)
+local function httpGet(url)
+    for _, m in ipairs({
+        function() if syn and syn.request then return syn.request({Url=url,Method="GET"}).Body end end,
+        function() if http_request then return http_request({Url=url,Method="GET"}).Body end end,
+        function() if request then return request({Url=url,Method="GET"}).Body end end,
+        function() if fluxus and fluxus.request then return fluxus.request({Url=url,Method="GET"}).Body end end,
+        function() return game:HttpGet(url) end,
+    }) do
+        local ok, v = pcall(m)
+        if ok and v and #tostring(v) > 10 then return v end
+    end
+    return nil
+end
+
+local function getServersViaAPISilent()
+    local url = "https://games.roblox.com/v1/games/" .. PlaceID
+        .. "/servers/Public?sortOrder=Asc&limit=100"
+    local raw = httpGet(url)
+    if not raw then return nil end
+    local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
+    if not ok or not data or not data.data then return nil end
+
+    local out = {}
+    local curJob = game.JobId
+    for _, s in ipairs(data.data) do
+        local id      = tostring(s.id or s.jobId or "")
+        local playing = tonumber(s.playing) or 0
+        local maxP    = tonumber(s.maxPlayers) or 12
+        local ct      = HopCache[id]
+        if id ~= "" and id ~= curJob
+            and (not ct or tick() - ct > 300)
+            and playing >= CONFIG.MinPlayers
+            and playing <= CONFIG.MaxPlayers
+            and playing < maxP
+        then
+            table.insert(out, {id = id, playing = playing, maxP = maxP})
+        end
+    end
+    return #out > 0 and out or nil
+end
+
+-- 3. Mở Server Browser và spam click từng nút Join trong danh sách
+local function spamJoinInGameBrowser()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return false end
+
+    -- Mở Server Browser nếu chưa mở
+    pcall(function()
+        for _, btn in ipairs(pg:GetDescendants()) do
+            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                local n = btn.Name:lower()
+                local t = btn:IsA("TextButton") and btn.Text:lower() or ""
+                if n == "server" or n == "servers" or n:find("serverbutton") or t == "server" or t == "servers" then
+                    if firesignal then pcall(function() firesignal(btn.MouseButton1Click) end) end
+                    if getconnections then
+                        for _, c in ipairs(getconnections(btn.MouseButton1Click) or {}) do pcall(function() c:Fire() end) end
+                    end
+                    pcall(function() btn:Activate() end)
+                    break
+                end
+            end
+        end
+    end)
+
+    task.wait(0.4)
+    dismissRobloxErrorPrompt()
+
+    -- Quét tất cả các nút Join
+    local joinButtons = {}
+    local searchedGuis = {pg}
+    if CoreGui then table.insert(searchedGuis, CoreGui) end
+
+    for _, root in ipairs(searchedGuis) do
+        for _, item in ipairs(root:GetDescendants()) do
+            local isJoin = false
+            if item:IsA("TextButton") then
+                local t = (item.Text or ""):lower()
+                if t == "join" or t:find("join") then isJoin = true end
+            elseif item:IsA("ImageButton") then
+                local n = (item.Name or ""):lower()
+                if n == "join" or n:find("join") then isJoin = true end
+            end
+
+            if isJoin then
+                local parent = item.Parent
+                local playing = 0
+                local maxP = 12
+                if parent then
+                    for _, lbl in ipairs(parent:GetDescendants()) do
+                        if lbl:IsA("TextLabel") and lbl.Text then
+                            local cur, mx = lbl.Text:match("(%d+)%s*/%s*(%d+)")
+                            if cur then
+                                playing = tonumber(cur) or 0
+                                maxP = tonumber(mx) or 12
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if playing < 12 then
+                    table.insert(joinButtons, { btn = item, playing = playing, maxP = maxP })
+                end
+            end
+        end
+    end
+
+    if #joinButtons == 0 then
+        return false
+    end
+
+    -- Sắp xếp: Ưu tiên server ít người hơn trước (4-9 người) để tránh bị lỗi 772 Server is full
+    table.sort(joinButtons, function(a, b)
+        if a.playing > 0 and b.playing > 0 then
+            return a.playing < b.playing
+        end
+        return a.playing > 0
+    end)
+
+    print(string.format("[AutoHop] Tìm thấy %d nút Join trong Browser! Bắt đầu spam join...", #joinButtons))
+
+    -- Spam click lần lượt từng nút Join
+    for i, entry in ipairs(joinButtons) do
+        local btn = entry.btn
+        if btn and btn.Parent then
+            print(string.format("[AutoHop] Spam Join nút %d/%d (%d/%d người)...", i, #joinButtons, entry.playing, entry.maxP))
+
+            -- Auto-load script khi sang server mới
+            pcall(function()
+                local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+                if q and isfile and isfile("bloxfruitautofruit.lua") then
+                    q('task.wait(2); loadfile("bloxfruitautofruit.lua")()')
+                end
+            end)
+
+            -- Click nút Join bằng mọi cách
+            pcall(function()
+                if firesignal then
+                    firesignal(btn.MouseButton1Click)
+                    firesignal(btn.MouseButton1Down)
+                    firesignal(btn.MouseButton1Up)
+                    firesignal(btn.Activated)
+                end
+                if getconnections then
+                    for _, ev in ipairs({"MouseButton1Click", "Activated", "MouseButton1Down", "MouseButton1Up"}) do
+                        local ok, conns = pcall(getconnections, btn[ev])
+                        if ok and conns then
+                            for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
+                        end
+                    end
+                end
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    if vim and btn.AbsolutePosition and btn.AbsoluteSize then
+                        local pos = btn.AbsolutePosition + btn.AbsoluteSize / 2
+                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+                        vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+                    end
+                end)
+                btn:Activate()
+            end)
+
+            -- Kiểm tra ngay: Nếu hiện popup 772 -> Bấm OK ngay và chuyển sang nút tiếp theo!
+            local gotError = false
+            for _ = 1, 5 do
+                task.wait(0.08)
+                if dismissRobloxErrorPrompt() then
+                    gotError = true
+                    print("[AutoHop] Phát hiện lỗi 772 -> Đã tự bấm OK, chuyển ngay sang server tiếp theo!")
+                    break
+                end
+            end
+
+            -- Nếu không dính lỗi 772 ngay, đợi 1.2s xem có chuyển map không
+            if not gotError then
+                task.wait(1.2)
+                if dismissRobloxErrorPrompt() then
+                    print("[AutoHop] Lỗi xuất hiện trễ -> Đã bấm OK, tiếp tục spam!")
+                end
+            end
+        end
+    end
+
+    return true
+end
+
+-- 4. Teleport theo JobId (kết hợp cả __ServerBrowser Remote lẫn TeleportService)
+local function teleportToJobId(id, playing, maxP)
+    HopCache[id] = tick()
+
+    -- Chuẩn bị tự chạy lại script ở server mới
+    pcall(function()
+        local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+        if q and isfile and isfile("bloxfruitautofruit.lua") then
+            q('task.wait(2); loadfile("bloxfruitautofruit.lua")()')
+        end
+    end)
+
+    -- Cách A: Gọi trực tiếp Remote của Blox Fruits
+    pcall(function()
+        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+        if sb then
+            sb:InvokeServer("teleport", id)
+        end
+    end)
+
+    -- Cách B: Gọi TeleportService
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(PlaceID, id, LocalPlayer)
+    end)
+
+    -- Watchdog 1.2s: nếu hiện 772 / 773, lập tức bấm OK và trả về false để chuyển server khác ngay
+    for _ = 1, 8 do
+        task.wait(0.15)
+        if dismissRobloxErrorPrompt() then
+            print("[AutoHop] Server " .. tostring(id):sub(1, 10) .. " bị lỗi 772/Full! Đã bấm OK, chuyển server ngay!")
+            return false
+        end
+    end
+
+    return true
+end
+
+-- Hàm thực thi Server Hop siêu tốc (Spam liên tục, không bao giờ bị dừng)
+local function executeServerHop()
+    setHUDStatus("hoping server")
+    setHUDFruit(nil)
+
+    while true do
+        -- ƯU TIÊN 1: Spam click từng nút Join trong Server Browser in-game
+        local browserOk = spamJoinInGameBrowser()
+        if browserOk then
+            task.wait(1.2)
+            dismissRobloxErrorPrompt()
+        end
+
+        -- ƯU TIÊN 2: Quét server qua API và Remote để spam teleport trực tiếp
+        local candidates = {}
+
+        local apiServers = getServersViaAPISilent()
+        if apiServers then
+            for _, s in ipairs(apiServers) do table.insert(candidates, s) end
+        end
+
+        local remoteServers = getServersViaRemoteSilent()
+        if remoteServers then
+            for _, s in ipairs(remoteServers) do table.insert(candidates, s) end
+        end
+
+        -- Lọc và sắp xếp: Ưu tiên server có 2 - 10 người (tránh server 11-12 người bị full 772)
+        local viable = {}
+        for _, s in ipairs(candidates) do
+            if s.playing >= CONFIG.MinPlayers and s.playing <= CONFIG.MaxPlayers and s.playing < s.maxP then
+                local ct = HopCache[s.id]
+                if not ct or (tick() - ct > 120) then
+                    table.insert(viable, s)
+                end
+            end
+        end
+
+        -- Sắp xếp ít người nhất lên đầu
+        table.sort(viable, function(a, b) return a.playing < b.playing end)
+
+        if #viable > 0 then
+            print(string.format("[AutoHop] Tìm thấy %d server khả dụng từ API/Remote. Bắt đầu spam teleport...", #viable))
+            for i, srv in ipairs(viable) do
+                print(string.format("[AutoHop] Đang hop vào server %d/%d (%d/%d người)...", i, #viable, srv.playing, srv.maxP))
+                local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
+                if not ok then
+                    -- Bị 772 và đã bấm OK -> Lập tức thử server tiếp theo
+                    dismissRobloxErrorPrompt()
+                end
+            end
+        else
+            -- Đã thử hết cache -> Xóa cache và bắt đầu lại
+            HopCache = { [game.JobId] = tick() }
+            getgenv().BFHopCache = HopCache
+        end
+
+        task.wait(CONFIG.HopInterval)
+    end
+end
+
+-- ====================================================================
+-- LUỒNG CHÍNH TỰ ĐỘNG: SCAN -> HÚT QUẢ -> STORE -> HOP SERVER
+-- ====================================================================
+task.spawn(function()
+    -- 1. TỰ ĐỘNG CHỌN PHE MARINES NGAY KHI VÀO GAME
+    setHUDStatus("scanning server")
+    for _ = 1, 12 do
+        if LocalPlayer.Team and tostring(LocalPlayer.Team) == "Marines" and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            break
+        end
+        autoSelectMarines()
+        task.wait(0.5)
+    end
+
+    -- Đợi nhân vật load hoàn chỉnh
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.CharacterAdded:Wait()
+    end
+    task.wait(1)
+
+    while true do
+        -- 2. Bắt đầu quét server
+        setHUDStatus("scanning server")
+        setHUDFruit(nil)
+        task.wait(0.5)
+
+        local foundFruits = scanAllFruits()
+
+        -- Nếu chưa thấy trái ngay, chờ thêm 1s quét lại lần 2 (đề phòng workspace đang stream)
+        if #foundFruits == 0 then
+            task.wait(1)
+            foundFruits = scanAllFruits()
+        end
+
+        if #foundFruits > 0 then
+            -- CÓ TRÁI TRONG SERVER: THU THẬP TẤT CẢ CÁC TRÁI
+            for i, fruit in ipairs(foundFruits) do
+                setHUDFruit(fruit.Info)
+                setHUDStatus("taking fruit")
+
+                -- Thu thập quả (kết hợp bay + reset đảo nếu ở xa)
+                smartTakeAndStoreFruit(fruit)
+                task.wait(0.5)
+                storeAllInventoryFruits()
+            end
+
+            -- Quét kiểm tra lại lần 2 xem còn trái nào khác không
+            task.wait(0.5)
+            local remaining = scanAllFruits()
+            if #remaining > 0 then
+                for _, fruit in ipairs(remaining) do
+                    setHUDFruit(fruit.Info)
+                    setHUDStatus("taking fruit")
+
+                    smartTakeAndStoreFruit(fruit)
+                    task.wait(0.5)
+                    storeAllInventoryFruits()
+                end
+            end
+
+            -- Đã nhặt và cất hết trái trong server -> Hop sang server khác
+            setHUDFruit(nil)
+            setHUDStatus("hoping server")
+            executeServerHop()
+            break
+        else
+            -- SERVER KHÔNG CÓ TRÁI NÀO -> TỰ ĐỘNG HOP SERVER NGAY
+            setHUDFruit(nil)
+            setHUDStatus("hoping server")
+            executeServerHop()
+            break
+        end
+    end
+end)
+
+print("[BloxFruits AutoFruit] Loaded - Kaitun HUD UI Active")
