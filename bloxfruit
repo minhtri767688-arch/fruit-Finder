@@ -582,42 +582,158 @@ end
 local HUD = createKaitunHUD()
 
 -- ====================================================================
--- TỰ ĐỘNG CHỌN TEAM MARINES KHI JOIN GAME
+-- ⚡ TỐI ƯU HÓA SIÊU MƯỢT CHO UGPHONE.COM / MOBILE / PC (COPY CHUẨN SCRIPT.LUA DÒNG 1436)
+-- Giảm tải CPU, triệt tiêu giật lag, tắt bóng đổ/nước/hiệu ứng nặng để chạy 24/7 ổn định
+-- ====================================================================
+local function applyLowCpu()
+    pcall(function()
+        local g = game
+        local w = g.Workspace
+        local l = g:GetService("Lighting")
+        local t = w.Terrain
+        t.WaterWaveSize = 0
+        t.WaterWaveSpeed = 0
+        t.WaterReflectance = 0
+        t.WaterTransparency = 0
+        l.GlobalShadows = false
+        l.FogEnd = 9e9
+        l.Brightness = 0
+        pcall(function() settings().Rendering.QualityLevel = "Level01" end)
+        for _, v in pairs(g:GetDescendants()) do
+            pcall(function()
+                if v:IsA("Part") or v:IsA("Union") or v:IsA("CornerWedgePart") or v:IsA("TrussPart") then
+                    v.Material = Enum.Material.Plastic
+                    v.Reflectance = 0
+                elseif v:IsA("Decal") or v:IsA("Texture") then
+                    v.Transparency = 1
+                elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+                    v.Lifetime = NumberRange.new(0)
+                elseif v:IsA("Explosion") then
+                    v.BlastPressure = 1
+                    v.BlastRadius = 1
+                elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") then
+                    v.Enabled = false
+                elseif v:IsA("MeshPart") then
+                    v.Material = Enum.Material.Plastic
+                    v.Reflectance = 0
+                end
+            end)
+        end
+        for _, e in pairs(l:GetChildren()) do
+            pcall(function()
+                if e:IsA("BlurEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect") or e:IsA("BloomEffect") or e:IsA("DepthOfFieldEffect") then
+                    e.Enabled = false
+                end
+            end)
+        end
+    end)
+end
+
+-- Kích hoạt ngầm chế độ Low CPU ngay khi khởi chạy
+task.spawn(applyLowCpu)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    applyLowCpu()
+end)
+
+-- ====================================================================
+-- 🖥️ HỆ THỐNG KHẮC PHỤC TRIỆT ĐỂ LỖI BUG MÀN HÌNH / KẸT CAMERA / MÀN HÌNH ĐEN
 -- ====================================================================
 local function isTeamSelected()
-    if LocalPlayer.Team and tostring(LocalPlayer.Team) ~= "" then
-        return true
-    end
-    return false
+    local t = LocalPlayer.Team
+    return t ~= nil and t.Name ~= "" and t.Name ~= "Neutral"
+end
+
+local function fixScreenAndCamera()
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if cam then
+            cam.CameraType = Enum.CameraType.Custom
+            if hum then
+                cam.CameraSubject = hum
+            end
+        end
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg and pg:FindFirstChild("Main") then
+            if pg.Main:FindFirstChild("ChooseTeam") and isTeamSelected() then
+                pg.Main.ChooseTeam.Visible = false
+            end
+            if pg.Main:FindFirstChild("BlackScreen") then
+                pg.Main.BlackScreen.Visible = false
+            end
+            if pg.Main:FindFirstChild("Loading") then
+                pg.Main.Loading.Visible = false
+            end
+        end
+    end)
+end
+
+-- ====================================================================
+-- 🏴‍☠️ TỰ ĐỘNG CHỌN TEAM CHUẨN 100% TỪ SCRIPT.LUA (DÒNG 22-58)
+-- ====================================================================
+local function ChooseTeamAction(teamName)
+    teamName = teamName or "Pirates"
+    pcall(function()
+        if LocalPlayer and (not LocalPlayer.Team or LocalPlayer.Team.Name == "" or LocalPlayer.Team.Name == "Neutral") then
+            local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+            local commF = remotes and remotes:FindFirstChild("CommF_")
+            if commF then
+                commF:InvokeServer("SetTeam", teamName)
+            end
+
+            pcall(function()
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                local chooseGui = pg and pg:FindFirstChild("Main") and pg.Main:FindFirstChild("ChooseTeam")
+                if chooseGui then
+                    local button = chooseGui:FindFirstChild("Container") and chooseGui.Container:FindFirstChild(teamName)
+                    if button then
+                        for _, v in pairs(button:GetDescendants()) do
+                            if v:IsA("TextButton") or v:IsA("ImageButton") then
+                                for _, btnEvent in pairs({"MouseButton1Click", "MouseButton1Down", "Activated"}) do
+                                    if firesignal then
+                                        pcall(function() firesignal(v[btnEvent]) end)
+                                    end
+                                    if getconnections then
+                                        local ok, conns = pcall(getconnections, v[btnEvent])
+                                        if ok and conns then
+                                            for _, c in ipairs(conns) do pcall(function() c:Fire() end) end
+                                        end
+                                    end
+                                end
+                                pcall(function() v:Activate() end)
+                            end
+                        end
+                    end
+                    chooseGui.Visible = false
+                end
+            end)
+        end
+    end)
 end
 
 local function autoSelectTeam()
     if isTeamSelected() then
+        fixScreenAndCamera()
         return true
     end
 
-    -- 1. Gọi trực tiếp Remote SetTeam của Blox Fruits (Marines hoặc Pirates)
-    pcall(function()
-        local rem = ReplicatedStorage:FindFirstChild("Remotes")
-        local commF = rem and rem:FindFirstChild("CommF_")
-        if commF then
-            commF:InvokeServer("SetTeam", "Marines")
-        end
-    end)
+    ChooseTeamAction("Pirates")
+    task.wait(0.2)
+    if isTeamSelected() then
+        fixScreenAndCamera()
+        return true
+    end
 
-    if isTeamSelected() then return true end
+    ChooseTeamAction("Marines")
+    task.wait(0.2)
+    if isTeamSelected() then
+        fixScreenAndCamera()
+        return true
+    end
 
-    pcall(function()
-        local rem = ReplicatedStorage:FindFirstChild("Remotes")
-        local commF = rem and rem:FindFirstChild("CommF_")
-        if commF then
-            commF:InvokeServer("SetTeam", "Pirates")
-        end
-    end)
-
-    if isTeamSelected() then return true end
-
-    -- 2. Click nút Marines hoặc Pirates trên giao diện Pick A Side
+    -- Click dự phòng trực tiếp trên bất kỳ UI Chọn Team nào
     pcall(function()
         local pg = LocalPlayer:FindFirstChild("PlayerGui")
         if pg then
@@ -625,7 +741,11 @@ local function autoSelectTeam()
                 if btn:IsA("TextButton") or btn:IsA("ImageButton") then
                     local name = btn.Name:lower()
                     local text = btn:IsA("TextButton") and btn.Text:lower() or ""
-                    if name:find("marine") or text:find("marine") or name:find("pirate") or text:find("pirate") then
+                    if name:find("pirate") or text:find("pirate") or name:find("marine") or text:find("marine") then
+                        if firesignal then
+                            pcall(function() firesignal(btn.MouseButton1Click) end)
+                            pcall(function() firesignal(btn.Activated) end)
+                        end
                         if getconnections then
                             for _, ev in ipairs({"Activated", "MouseButton1Click"}) do
                                 local ok, conns = pcall(getconnections, btn[ev])
@@ -641,7 +761,11 @@ local function autoSelectTeam()
         end
     end)
 
-    return isTeamSelected()
+    if isTeamSelected() then
+        fixScreenAndCamera()
+        return true
+    end
+    return false
 end
 local autoSelectMarines = autoSelectTeam
 
@@ -655,13 +779,13 @@ task.spawn(function()
             if HUD.Players then
                 HUD.Players.Text = "👥 " .. tostring(#Players:GetPlayers()) .. "/12"
             end
+            fixScreenAndCamera()
         end)
     end
 end)
 
--- Hàm cập nhật trạng thái HUD (chỉ 3 trạng thái theo đúng yêu cầu)
+-- Hàm cập nhật trạng thái HUD
 local function setHUDStatus(state)
-    -- state: "scanning server" | "taking fruit" | "hoping server"
     pcall(function()
         if state == "taking fruit" then
             HUD.Status.Text = "Status: taking fruit"
@@ -669,6 +793,9 @@ local function setHUDStatus(state)
         elseif state == "hoping server" then
             HUD.Status.Text = "Status: hoping server"
             HUD.Status.TextColor3 = Color3.fromRGB(80, 200, 255) -- Cyan Blue
+        elseif state == "choosing team" then
+            HUD.Status.Text = "Status: choosing team"
+            HUD.Status.TextColor3 = Color3.fromRGB(255, 150, 50) -- Orange
         else
             HUD.Status.Text = "Status: scanning server"
             HUD.Status.TextColor3 = Color3.fromRGB(255, 200, 50) -- Yellow
@@ -757,10 +884,75 @@ local function isFruitObject(obj)
     return false
 end
 
+-- Bảng ánh xạ chính xác 100% tất cả OriginalName trong Blox Fruits về chuẩn Database
+local FruitOriginalNameMap = {
+    ["rocket-rocket"]       = "rocket",
+    ["spin-spin"]           = "spin",
+    ["blade-blade"]          = "blade",
+    ["chop-chop"]           = "blade",
+    ["spring-spring"]       = "spring",
+    ["bomb-bomb"]           = "bomb",
+    ["smoke-smoke"]         = "smoke",
+    ["spike-spike"]         = "spike",
+    ["flame-flame"]         = "flame",
+    ["ice-ice"]             = "ice",
+    ["sand-sand"]           = "sand",
+    ["dark-dark"]           = "dark",
+    ["eagle-eagle"]         = "falcon",
+    ["falcon-falcon"]       = "falcon",
+    ["diamond-diamond"]     = "diamond",
+    ["light-light"]         = "light",
+    ["rubber-rubber"]       = "rubber",
+    ["ghost-ghost"]         = "ghost",
+    ["revive-revive"]       = "ghost",
+    ["magma-magma"]         = "magma",
+    ["barrier-barrier"]     = "creation",
+    ["creation-creation"]   = "creation",
+    ["quake-quake"]         = "quake",
+    ["buddha-buddha"]       = "buddha",
+    ["love-love"]           = "love",
+    ["spider-spider"]       = "spider",
+    ["string-string"]       = "spider",
+    ["sound-sound"]         = "sound",
+    ["phoenix-phoenix"]     = "phoenix",
+    ["portal-portal"]       = "portal",
+    ["door-door"]           = "portal",
+    ["lightning-lightning"] = "rumble",
+    ["rumble-rumble"]       = "rumble",
+    ["pain-pain"]           = "pain",
+    ["paw-paw"]             = "pain",
+    ["blizzard-blizzard"]   = "blizzard",
+    ["gravity-gravity"]     = "gravity",
+    ["t-rex-t-rex"]         = "t-rex",
+    ["trex-trex"]           = "t-rex",
+    ["mammoth-mammoth"]     = "mammoth",
+    ["dough-dough"]         = "dough",
+    ["shadow-shadow"]       = "shadow",
+    ["venom-venom"]         = "venom",
+    ["gas-gas"]             = "gas",
+    ["control-control"]     = "control",
+    ["spirit-spirit"]       = "spirit",
+    ["soul-soul"]           = "spirit",
+    ["leopard-leopard"]     = "leopard",
+    ["tiger-tiger"]         = "leopard",
+    ["yeti-yeti"]           = "yeti",
+    ["kitsune-kitsune"]     = "kitsune",
+    ["dragon-dragon"]       = "dragon",
+    ["kilo-kilo"]           = "rocket",
+}
+
+local SortedFruitKeys = {}
+for k in pairs(FruitDatabase) do
+    table.insert(SortedFruitKeys, k)
+end
+table.sort(SortedFruitKeys, function(a, b)
+    return #a > #b
+end)
+
 local function identifyFruit(obj)
     if not obj then return nil end
 
-    -- 1. ƯU TIÊN CAO NHẤT: Thuộc tính OriginalName từ game (Chính xác 100%, ví dụ: "Rocket-Rocket", "Control-Control")
+    -- 1. ƯU TIÊN CAO NHẤT: Thuộc tính OriginalName từ game (Chính xác 100%, ví dụ: "Rocket-Rocket", "T-Rex-T-Rex")
     local origName = nil
     pcall(function()
         origName = obj:GetAttribute("OriginalName")
@@ -776,32 +968,50 @@ local function identifyFruit(obj)
     end)
 
     if origName and type(origName) == "string" and origName ~= "" then
-        local key = string.lower(origName)
-        key = string.gsub(key, "%-.*", "") -- "Rocket-Rocket" -> "rocket", "Control-Control" -> "control"
-        key = string.gsub(key, "%s+", "")
-        local data = FruitDatabase[key]
-        if data then
+        local rawKey = string.lower(origName):gsub("%s+", "")
+        local mapped = FruitOriginalNameMap[rawKey]
+        if mapped and FruitDatabase[mapped] then
+            local data = FruitDatabase[mapped]
             return {
-                Key = key,
+                Key = mapped,
                 DisplayName = data.Display .. " Fruit",
                 Rarity = data.Rarity,
                 Color = data.Color,
             }
         end
+
+        for _, key in ipairs(SortedFruitKeys) do
+            if rawKey:find(key, 1, true) then
+                local data = FruitDatabase[key]
+                return {
+                    Key = key,
+                    DisplayName = data.Display .. " Fruit",
+                    Rarity = data.Rarity,
+                    Color = data.Color,
+                }
+            end
+        end
     end
 
-    -- 2. ƯU TIÊN 2: Tên của chính đối tượng obj.Name (nếu không phải tên chung chung "Fruit ")
-    local rawName = obj.Name
-    local lowerName = string.lower(rawName)
-    local cleanName = string.gsub(lowerName, "fruit", "")
-    cleanName = string.gsub(cleanName, "blox", "")
-    cleanName = string.gsub(cleanName, "%-.*", "")
-    cleanName = string.gsub(cleanName, "%s+", "")
+    -- 2. ƯU TIÊN 2: Tên của chính đối tượng obj.Name (nếu không phải tên chung chung)
+    local rawName = string.lower(tostring(obj.Name or ""))
+    local cleanName = rawName:gsub("%s+", "")
 
-    if cleanName ~= "" and cleanName ~= " " then
-        -- So khớp nguyên từ để không bao giờ nhận diện nhầm
-        for key, data in pairs(FruitDatabase) do
-            if cleanName == key or lowerName:find("%f[%a]" .. key .. "%f[%A]") then
+    if FruitOriginalNameMap[cleanName] then
+        local mapped = FruitOriginalNameMap[cleanName]
+        local data = FruitDatabase[mapped]
+        return {
+            Key = mapped,
+            DisplayName = data.Display .. " Fruit",
+            Rarity = data.Rarity,
+            Color = data.Color,
+        }
+    end
+
+    if rawName ~= "fruit " and rawName ~= "fruit" and rawName ~= "blox fruit" and rawName ~= "devil fruit" then
+        for _, key in ipairs(SortedFruitKeys) do
+            if rawName:find("%f[%a]" .. key .. "%f[%A]") or rawName:find(key, 1, true) then
+                local data = FruitDatabase[key]
                 return {
                     Key = key,
                     DisplayName = data.Display .. " Fruit",
@@ -815,8 +1025,9 @@ local function identifyFruit(obj)
     -- 3. ƯU TIÊN 3: ToolTip của Tool
     if obj:IsA("Tool") and obj.ToolTip and obj.ToolTip ~= "" and obj.ToolTip ~= "Blox Fruit" then
         local tip = string.lower(obj.ToolTip)
-        for key, data in pairs(FruitDatabase) do
-            if tip:find("%f[%a]" .. key .. "%f[%A]") then
+        for _, key in ipairs(SortedFruitKeys) do
+            if tip:find("%f[%a]" .. key .. "%f[%A]") or tip:find(key, 1, true) then
+                local data = FruitDatabase[key]
                 return {
                     Key = key,
                     DisplayName = data.Display .. " Fruit",
@@ -1351,104 +1562,11 @@ script uptime: `%s`]],
     end
 end
 
--- ====================================================================
--- HỆ THỐNG THU THẬP FRUIT THÔNG MINH (HÚT + BAY + RESET ĐẢO NẾU Ở XA)
--- ====================================================================
-local noclipConnection = nil
-
-local function startNoClip()
-    if noclipConnection then noclipConnection:Disconnect() end
-    noclipConnection = RunService.Stepped:Connect(function()
-        local char = LocalPlayer.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-        end
-    end)
-end
-
-local function stopNoClip()
-    if noclipConnection then
-        noclipConnection:Disconnect()
-        noclipConnection = nil
-    end
-    local char = LocalPlayer.Character
-    if char then
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                part.CanCollide = true
-            end
-        end
-    end
-end
-
-local function getIslandForPosition(targetPos)
-    local worldOrigin = Workspace:FindFirstChild("_WorldOrigin")
-    if not worldOrigin or not worldOrigin:FindFirstChild("Locations") then return nil, 999999 end
-
-    local nearestLoc = nil
-    local minDistance = 999999
-
-    for _, loc in ipairs(worldOrigin.Locations:GetChildren()) do
-        local locPos = loc:IsA("BasePart") and loc.Position or loc:GetPivot().Position
-        local dist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(locPos.X, 0, locPos.Z)).Magnitude
-        if dist < minDistance then
-            minDistance = dist
-            nearestLoc = loc
-        end
-    end
-
-    return nearestLoc, minDistance
-end
-
--- Hàm hút trái tại chỗ (chỉ hiệu quả khi ở gần hoặc cùng đảo)
-local function trySnatchHere(fruitData)
-    if not fruitData or not fruitData.Object then return false end
-    local char = LocalPlayer.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
-    local hrp = char.HumanoidRootPart
-    local targetPart = fruitData.RootPart or getFruitRoot(fruitData.Object)
-    if not targetPart then return false end
-
-    pcall(function()
-        if targetPart:IsA("BasePart") then
-            targetPart.CFrame = hrp.CFrame
-        end
-        if fruitData.Object:IsA("Tool") and fruitData.Object:FindFirstChild("Handle") then
-            fruitData.Object.Handle.CFrame = hrp.CFrame
-        end
-    end)
-
-    if firetouchinterest then
-        pcall(function()
-            firetouchinterest(hrp, targetPart, 0)
-        end)
-    end
-
-    if fruitData.Object:IsA("Tool") and char:FindFirstChildOfClass("Humanoid") then
-        pcall(function()
-            char.Humanoid:EquipTool(fruitData.Object)
-        end)
-    end
-
-    task.wait(0.2)
-    storeAllInventoryFruits()
-
-    local isCollected = (fruitData.Object.Parent == LocalPlayer.Backpack) or
-                        (LocalPlayer.Character and fruitData.Object.Parent == LocalPlayer.Character) or
-                        (not fruitData.Object.Parent or fruitData.Object.Parent ~= Workspace)
-    return isCollected
-end
-
 local stopSmoothFly = nil
 local smoothFlyTo = nil
 
 -- Hàm khôi phục nhân vật về trạng thái di chuyển bình thường (chống đơ/đứng im 100%)
 local function restoreCharacterMovement()
-    stopNoClip()
     pcall(function()
         if stopSmoothFly then stopSmoothFly() end
     end)
@@ -2926,7 +3044,7 @@ local function teleportToJobId(id, playing, maxP)
     return true
 end
 
--- Hàm thực thi Server Hop siêu tốc (Spam Browser THẬT + Dự phòng Remote không bao giờ kẹt)
+-- Hàm thực thi Server Hop siêu tốc (API 4-9 người trước -> Remote -> Real Browser)
 local function executeServerHop()
     setHUDStatus("hoping server")
     setHUDFruit(nil)
@@ -2936,101 +3054,51 @@ local function executeServerHop()
         hopRound = hopRound + 1
         print(string.format("[AutoHop] Bắt đầu vòng hop server #%d (Tìm kiếm server %d - %d người, tránh hacker)...", hopRound, CONFIG.MinPlayers, CONFIG.MaxPlayers))
 
-        -- ƯU TIÊN 1: Mở Real Server Browser trên màn hình và spam click từng nút Join (chỉ chọn 4-8 người)
-        local browserOk = spamJoinRealBrowser()
-        if browserOk then
-            task.wait(1.2)
-            dismissRobloxErrorPrompt()
-        end
-
-        -- ƯU TIÊN 2: Quét server qua Remote __ServerBrowser và API để spam teleport trực tiếp nếu UI chưa vào được
-        local candidates = {}
-
-        -- Lấy server từ Remote Blox Fruits: Quét các trang từ 35 đến 95 (nơi tập trung server 4-8 người)
-        pcall(function()
-            local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
-            if sb then
-                local startPage = math.random(55, 80)
-                for page = startPage, 100 do
-                    local res = sb:InvokeServer(page)
-                    if type(res) == "table" then
-                        for id, data in pairs(res) do
-                            local sId = tostring(id)
-                            local plrs = nil
-                            local maxP = 12
-                            if type(data) == "table" then
-                                plrs = tonumber(data.Count or data.count or data.Players or data.playing)
-                                maxP = tonumber(data.MaxPlayers or data.maxPlayers or 12) or 12
-                            elseif type(data) == "number" then
-                                plrs = data
-                            end
-
-                            -- LỌC CỨNG NGAY TẠI NGUỒN: CHỈ NHẬN TỪ 4 ĐẾN 9 NGƯỜI (TRÁNH HACKER 1-3 NGƯỜI)
-                            if sId ~= "" and sId ~= game.JobId and plrs and plrs >= CONFIG.MinPlayers and plrs <= CONFIG.MaxPlayers and plrs < 10 and plrs < maxP then
-                                local ct = HopCache[sId]
-                                if not ct or (tick() - ct > 120) then
-                                    table.insert(candidates, {id = sId, playing = plrs, maxP = maxP})
-                                end
-                            end
-                        end
-                    end
-                    if #candidates >= 15 then break end
-                    task.wait(0.08)
-                end
-            end
-        end)
-
-        -- Bổ sung server từ API nếu cần (API lọc MinPlayers = 4, MaxPlayers = 8)
-        if #candidates < 6 then
-            local apiServers = getServersViaAPISilent()
-            if apiServers then
-                for _, s in ipairs(apiServers) do
-                    if s.playing and s.playing >= CONFIG.MinPlayers and s.playing <= CONFIG.MaxPlayers and s.playing < 10 then
-                        table.insert(candidates, s)
-                    end
-                end
-            end
-        end
-
-        -- Lọc và sắp xếp: Chỉ lấy server từ 4 đến 8 người (dưới 10 người)
-        local viable = {}
-        for _, s in ipairs(candidates) do
-            if s.playing and s.playing >= CONFIG.MinPlayers and s.playing <= CONFIG.MaxPlayers and s.playing < 10 and s.playing < s.maxP then
-                local ct = HopCache[s.id]
-                if not ct or (tick() - ct > 120) then
-                    table.insert(viable, s)
-                end
-            end
-        end
-
-        -- Sắp xếp ít người nhất lên đầu trong khoảng 4-8 người
-        table.sort(viable, function(a, b)
-            return a.playing < b.playing
-        end)
-
-        if #viable > 0 then
-            print(string.format("[AutoHop] Tìm thấy %d server khả dụng (%d - %d người, tránh hacker). Bắt đầu kết nối...", #viable, CONFIG.MinPlayers, CONFIG.MaxPlayers))
-            for i = 1, math.min(#viable, 6) do
-                local srv = viable[i]
-                print(string.format("[AutoHop] Đang hop vào server %d/%d (%d/%d người)...", i, #viable, srv.playing, srv.maxP))
+        -- ƯU TIÊN 1: LẤY QUA ROBLOX PUBLIC API (SIÊU TỐC < 0.3s, chuẩn số người 4-9)
+        local apiCandidates = getServersViaAPISilent()
+        if apiCandidates and #apiCandidates > 0 then
+            table.sort(apiCandidates, function(a, b) return a.playing < b.playing end)
+            print(string.format("[AutoHop] ⚡ API trả về %d server (%d-%d người). Bắt đầu kết nối server tốt nhất...", #apiCandidates, CONFIG.MinPlayers, CONFIG.MaxPlayers))
+            for i = 1, math.min(#apiCandidates, 5) do
+                local srv = apiCandidates[i]
+                print(string.format("[AutoHop] Đang hop vào server %s (%d/%d người)...", tostring(srv.id):sub(1, 8), srv.playing, srv.maxP))
                 local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
                 if not ok then
                     dismissRobloxErrorPrompt()
                 end
             end
-        else
-            print(string.format("[AutoHop] Chưa tìm thấy server %d-%d người nào khả dụng, làm mới cache và quét lại...", CONFIG.MinPlayers, CONFIG.MaxPlayers))
-            HopCache = { [game.JobId] = tick() }
-            getgenv().BFHopCache = HopCache
         end
 
+        -- ƯU TIÊN 2: QUÉT REMOTE __ServerBrowser (nếu API chưa vào được)
+        local remoteCandidates = getServersViaRemoteSilent()
+        if remoteCandidates and #remoteCandidates > 0 then
+            table.sort(remoteCandidates, function(a, b) return a.playing < b.playing end)
+            print(string.format("[AutoHop] ⚡ Remote trả về %d server (%d-%d người). Đang kết nối...", #remoteCandidates, CONFIG.MinPlayers, CONFIG.MaxPlayers))
+            for i = 1, math.min(#remoteCandidates, 4) do
+                local srv = remoteCandidates[i]
+                local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
+                if not ok then
+                    dismissRobloxErrorPrompt()
+                end
+            end
+        end
+
+        -- ƯU TIÊN 3: Mở Real Server Browser trên màn hình và spam click nút Join
+        local browserOk = spamJoinRealBrowser()
+        if browserOk then
+            task.wait(1.0)
+            dismissRobloxErrorPrompt()
+        end
+
+        HopCache = { [game.JobId] = tick() }
+        getgenv().BFHopCache = HopCache
         task.wait(CONFIG.HopInterval)
         dismissRobloxErrorPrompt()
     end
 end
 
 -- ====================================================================
--- LUỒNG CHÍNH TỰ ĐỘNG: SCAN KỸ LƯỠNG TOÀN BỘ MAP & CÁC ĐẢO (15S) -> HÚT QUẢ -> STORE -> HOP SERVER
+-- LUỒNG CHÍNH TỰ ĐỘNG: CHỜ CHỌN TEAM & SPAWN -> QUÉT MAP -> TWEEN QUẢ -> STORE -> HOP SERVER
 -- ====================================================================
 task.spawn(function()
     -- BƯỚC 1: TỰ ĐỘNG CHỌN TEAM & ĐỢI NHÂN VẬT SPAWN (CHỌN XONG MỚI SCAN!)
@@ -3038,63 +3106,50 @@ task.spawn(function()
     setHUDFruit(nil)
     print("[BloxFruits AutoFruit] ⏳ Bước 1: Đang chờ chọn team và nhân vật sẵn sàng...")
 
-    -- Lặp chọn team cho đến khi đã vào được team (Marines hoặc Pirates)
-    local teamWaitStart = tick()
+    -- Lặp chọn team cho đến khi đã vào được team (Pirates hoặc Marines, TUYỆT ĐỐI KHÔNG Neutral)
+    local teamAttempts = 0
+    local teamName = "Pirates"
     while not isTeamSelected() do
+        teamAttempts = teamAttempts + 1
+        if teamAttempts > 6 then
+            teamName = (teamName == "Pirates") and "Marines" or "Pirates"
+        end
+        ChooseTeamAction(teamName)
         autoSelectTeam()
+        fixScreenAndCamera()
         task.wait(0.3)
-        if tick() - teamWaitStart > 10 then break end
+        if teamAttempts > 30 then break end
     end
 
     -- Đợi nhân vật spawn hoàn chỉnh (phải có HumanoidRootPart, Humanoid và Health > 0)
     local spawnWaitStart = tick()
-    while not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Health > 0) do
+    repeat
         task.wait(0.2)
-        if tick() - spawnWaitStart > 12 then break end
-    end
+        fixScreenAndCamera()
+    until (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid").Health > 0) or (tick() - spawnWaitStart > 20)
 
-    print(string.format("[BloxFruits AutoFruit] ✅ Team: %s | Nhân vật đã sẵn sàng!", tostring(LocalPlayer.Team or "Ready")))
+    fixScreenAndCamera()
+    print(string.format("[BloxFruits AutoFruit] ✅ Team: %s | Nhân vật đã sẵn sàng!", tostring(LocalPlayer.Team and LocalPlayer.Team.Name or "Ready")))
 
-    -- Chờ 1.5s để server stream đầy đủ các đối tượng, hòn đảo và trái ác quỷ
+    -- Chờ 1.5s để server stream đầy đủ các đối tượng và trái ác quỷ
     task.wait(1.5)
+    fixScreenAndCamera()
 
     -- BƯỚC 2: QUÉT SERVER TOÀN BỘ MAP & MỌI HÒN ĐẢO (CHỌN XONG TEAM MỚI SCAN!)
     setHUDStatus("scanning server")
     setHUDFruit(nil)
-    print("[BloxFruits AutoFruit] 🔍 Bước 2: Bắt đầu quét thông minh toàn bộ map và từng hòn đảo...")
+    print("[BloxFruits AutoFruit] 🔍 Bước 2: Bắt đầu quét nhanh toàn bộ map...")
 
-    local foundFruits = {}
-    local scanStartTime = tick()
-    local scanDuration = 15 -- Duy trì quét trong 15s để server stream toàn bộ đảo và trái
+    local foundFruits = scanAllFruits()
 
-    while tick() - scanStartTime < scanDuration do
-        local remainingSec = math.ceil(scanDuration - (tick() - scanStartTime))
-        HUD.Status.Text = string.format("Scanning Map (%ds)...", remainingSec)
-
-        local currentScan = scanAllFruits()
-        if #currentScan > 0 then
-            foundFruits = currentScan
-            print(string.format("[BloxFruits AutoFruit] ⚡ Phát hiện ngay %d trái sau %.1fs!", #foundFruits, tick() - scanStartTime))
-            break
-        end
-        task.wait(1)
-    end
-
-    -- Nếu hết 15s mà chưa thấy trái, quét kiểm tra lần 1
+    -- Nếu lần 1 chưa thấy, chờ 1.5s và quét lần 2 xác nhận chắc chắn
     if #foundFruits == 0 then
-        foundFruits = scanAllFruits()
-    end
-
-    -- Nếu vẫn chưa thấy, quét lại lần nữa cho chắc chắn 100% trước khi quyết định hop
-    if #foundFruits == 0 then
-        print("[BloxFruits AutoFruit] Chưa thấy trái, đang quét kiểm tra lại lần 2 toàn diện trước khi hop...")
         task.wait(1.5)
         foundFruits = scanAllFruits()
     end
 
     if #foundFruits > 0 then
         -- 🌟 SẮP XẾP ƯU TIÊN THEO ĐỘ HIẾM: TRÁI HIẾM HƠN SẼ ĐƯỢC NHẶT VÀ CẤT TRƯỚC!
-        -- Thứ tự ưu tiên: Mythical (5) > Legendary (4) > Rare (3) > Uncommon (2) > Common (1)
         foundFruits = sortFruitsByRarity(foundFruits)
 
         print(string.format("[BloxFruits AutoFruit] ⚡ Xác nhận có %d trái trong server! Thứ tự thu thập ưu tiên:", #foundFruits))
@@ -3126,8 +3181,7 @@ task.spawn(function()
                 if fruit.Object and fruit.Object.Parent then
                     setHUDFruit(fruit.Info)
                     setHUDStatus("taking fruit")
-
-                    local storeRes = smartTakeAndStoreFruit(fruit)
+                    smartTakeAndStoreFruit(fruit)
                     task.wait(0.25)
                 end
             end
@@ -3144,13 +3198,13 @@ task.spawn(function()
         setHUDStatus("hoping server")
         executeServerHop()
     else
-        -- SERVER KHÔNG CÓ TRÁI NÀO SAU KHI ĐÃ QUÉT KỸ 2 LẦN -> TỰ ĐỘNG HOP SERVER NGAY LẬP TỨC
+        -- SERVER KHÔNG CÓ TRÁI NÀO -> TỰ ĐỘNG HOP SERVER NGAY LẬP TỨC (KHÔNG CHỜ ĐỢI LÂU!)
         shouldTween = false
         getgenv().OnFarm = false
         restoreCharacterMovement()
         clearAllFruitESPs()
 
-        print("[BloxFruits AutoFruit] Server chắc chắn không có trái! Tự động hop server ngay...")
+        print("[BloxFruits AutoFruit] ⚡ Server chắc chắn không có trái! Tự động hop server ngay lập tức...")
         setHUDFruit(nil)
         setHUDStatus("hoping server")
         executeServerHop()
