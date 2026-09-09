@@ -1846,7 +1846,7 @@ local function notifyFruitWebhook(fruitData, storeResult)
     local rarity = fruitInfo.Rarity or "Common"
     local fruitDisplayName = fruitInfo.DisplayName or "Fruit"
 
-    -- Nếu tên hiển thị vẫn là "Devil Fruit", chỉ tra cứu DUY NHẤT từ CollectedTool của chính quả này
+    -- Nếu tên hiển thị vẫn là "Devil Fruit", chỉ tra cứu DUY NHẤT từ CollectedTool của chính trái này
     if fruitDisplayName == "Devil Fruit" and fruitData.CollectedTool and fruitData.CollectedTool.Parent then
         local real = identifyFruit(fruitData.CollectedTool)
         if real and real.DisplayName ~= "Devil Fruit" then
@@ -2621,16 +2621,24 @@ end
 -- Nếu gặp lỗi 772 (Server is full) -> Tự động bấm OK ngay và spam nút tiếp theo
 -- ====================================================================
 
--- 1. Lấy server qua __ServerBrowser Remote (ngầm) - Quét từ trang 35 đến 90 nơi chứa server dưới 10 người
-local function getServersViaRemoteSilent()
+-- ====================================================================
+-- 🌐 HỆ THỐNG SERVER HOP TỰ ĐỘNG KHÔNG BAO GIỜ KẸT (ROBUST MULTI-SOURCE HOPPER)
+-- Nguồn 1: Blox Fruits Native Remote __ServerBrowser (quét từ trang 1)
+-- Nguồn 2: RoProxy + Roblox Public API (Desc & Asc)
+-- Cơ chế tự thích ứng: Ưu tiên 4-9 người -> nếu không có thì lấy bất kỳ server < 12 người
+-- Watchdog khẩn cấp: Tự động gọi TeleportService:Teleport(PlaceID) nếu sau 20s chưa hop được
+-- ====================================================================
+
+-- 1. Lấy server qua __ServerBrowser Remote của Blox Fruits (Native, không lo bị chặn API)
+local function getServersViaRemote()
     local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
-    if not sb then return nil end
+    if not sb then return {} end
 
     local curJob = game.JobId
     local validServers = {}
-    local startPage = math.random(55, 80)
 
-    for page = startPage, 100 do
+    -- Quét từ trang 1 đến 20 (Blox Fruits chứa server từ trang 1)
+    for page = 1, 20 do
         local ok, res = pcall(function()
             return sb:InvokeServer(page)
         end)
@@ -2648,62 +2656,104 @@ local function getServersViaRemoteSilent()
                     playing = data
                 end
 
-                -- KHÓA CỨNG: BẮT BUỘC TỪ 4 ĐẾN 8 NGƯỜI (DƯỚI 10 NGƯỜI)
-                if id ~= "" and id ~= curJob and playing >= CONFIG.MinPlayers and playing <= CONFIG.MaxPlayers and playing < 10 and playing < maxP then
+                if id ~= "" and id ~= curJob and playing < maxP then
                     local ct = HopCache[id]
-                    if not ct or (tick() - ct > 300) then
+                    if not ct or (tick() - ct > 180) then
                         table.insert(validServers, {id = id, playing = playing, maxP = maxP})
                     end
                 end
             end
-            if #validServers >= 8 then break end
+            if #validServers >= 15 then break end
+        else
+            if page > 3 then break end
         end
-        task.wait(0.1)
+        task.wait(0.04)
     end
 
-    return #validServers > 0 and validServers or nil
+    return validServers
 end
 
--- 2. Lấy server qua Roblox Public API (ngầm)
+-- 2. Hàm gửi HTTP request tương thích mọi executor
 local function httpGet(url)
-    for _, m in ipairs({
-        function() if syn and syn.request then return syn.request({Url=url,Method="GET"}).Body end end,
-        function() if http_request then return http_request({Url=url,Method="GET"}).Body end end,
-        function() if request then return request({Url=url,Method="GET"}).Body end end,
-        function() if fluxus and fluxus.request then return fluxus.request({Url=url,Method="GET"}).Body end end,
+    local methods = {
+        function() if syn and syn.request then return syn.request({Url=url, Method="GET"}).Body end end,
+        function() if http_request then return http_request({Url=url, Method="GET"}).Body end end,
+        function() if request then return request({Url=url, Method="GET"}).Body end end,
+        function() if fluxus and fluxus.request then return fluxus.request({Url=url, Method="GET"}).Body end end,
         function() return game:HttpGet(url) end,
-    }) do
+        function() return game:HttpGetAsync(url) end,
+    }
+    for _, m in ipairs(methods) do
         local ok, v = pcall(m)
-        if ok and v and #tostring(v) > 10 then return v end
+        if ok and v and #tostring(v) > 10 then return tostring(v) end
     end
     return nil
 end
 
-local function getServersViaAPISilent()
-    local url = "https://games.roblox.com/v1/games/" .. PlaceID
-        .. "/servers/Public?sortOrder=Asc&limit=100"
-    local raw = httpGet(url)
-    if not raw then return nil end
-    local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
-    if not ok or not data or not data.data then return nil end
-
+-- 3. Lấy server qua Roblox Public API + RoProxy (Desc & Asc)
+local function getServersViaAPI()
     local out = {}
     local curJob = game.JobId
-    for _, s in ipairs(data.data) do
-        local id      = tostring(s.id or s.jobId or "")
-        local playing = tonumber(s.playing) or 0
-        local maxP    = tonumber(s.maxPlayers) or 12
-        local ct      = HopCache[id]
-        if id ~= "" and id ~= curJob
-            and (not ct or tick() - ct > 300)
-            and playing >= CONFIG.MinPlayers
-            and playing <= CONFIG.MaxPlayers
-            and playing < maxP
-        then
-            table.insert(out, {id = id, playing = playing, maxP = maxP})
+
+    local endpoints = {
+        "https://games.roproxy.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Desc&limit=100",
+        "https://games.roproxy.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100",
+        "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Desc&limit=100",
+        "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100",
+    }
+
+    for _, url in ipairs(endpoints) do
+        local raw = httpGet(url)
+        if raw then
+            local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
+            if ok and data and data.data and type(data.data) == "table" and #data.data > 0 then
+                for _, s in ipairs(data.data) do
+                    local id      = tostring(s.id or s.jobId or "")
+                    local playing = tonumber(s.playing) or 0
+                    local maxP    = tonumber(s.maxPlayers) or 12
+                    local ct      = HopCache[id]
+
+                    if id ~= "" and id ~= curJob and playing < maxP and (not ct or tick() - ct > 180) then
+                        table.insert(out, {id = id, playing = playing, maxP = maxP})
+                    end
+                end
+                if #out >= 15 then break end
+            end
         end
     end
-    return #out > 0 and out or nil
+
+    return out
+end
+
+-- 4. Bộ chọn server thông minh: Ưu tiên 4-9 người -> nếu không có thì chọn server < 12 người (chống kẹt tuyệt đối!)
+local function pickBestServer(serverList)
+    if not serverList or #serverList == 0 then return nil end
+
+    local minP = CONFIG.MinPlayers or 4
+    local maxP = CONFIG.MaxPlayers or 9
+
+    local ideal = {}
+    local fallback = {}
+
+    for _, s in ipairs(serverList) do
+        if s.playing >= minP and s.playing <= maxP and s.playing < s.maxP then
+            table.insert(ideal, s)
+        elseif s.playing < s.maxP and s.id ~= game.JobId then
+            table.insert(fallback, s)
+        end
+    end
+
+    if #ideal > 0 then
+        table.sort(ideal, function(a, b) return a.playing < b.playing end)
+        return ideal[math.random(1, math.min(3, #ideal))]
+    end
+
+    if #fallback > 0 then
+        table.sort(fallback, function(a, b) return a.playing < b.playing end)
+        return fallback[math.random(1, math.min(3, #fallback))]
+    end
+
+    return nil
 end
 
 -- ====================================================================
@@ -3131,14 +3181,15 @@ local function spamJoinRealBrowser()
             if isJoin and item.Visible ~= false then
                 local playing = getPlayerCountForJoinButton(item, browserFrame)
 
-                -- CHẤP NHẬN SERVER TỪ 4 ĐẾN 9 NGƯỜI (CHUẨN 4-5-6-7-8-9 NGƯỜI, DƯỚI 10 NGƯỜI)
-                if playing and playing >= CONFIG.MinPlayers and playing <= CONFIG.MaxPlayers and playing < 10 then
+                -- Chấp nhận mọi server chưa full (< 12 người), đánh dấu ưu tiên nếu trong khoảng 4-9 người
+                if playing and playing < 12 then
                     local alreadyAdded = false
                     for _, existing in ipairs(joinButtons) do
                         if existing.btn == item then alreadyAdded = true; break end
                     end
                     if not alreadyAdded then
-                        table.insert(joinButtons, { btn = item, playing = playing, maxP = 12 })
+                        local isIdeal = (playing >= CONFIG.MinPlayers and playing <= CONFIG.MaxPlayers)
+                        table.insert(joinButtons, { btn = item, playing = playing, maxP = 12, isIdeal = isIdeal })
                     end
                 end
             end
@@ -3146,7 +3197,7 @@ local function spamJoinRealBrowser()
 
         if #joinButtons > 0 then break end
 
-        -- Nếu chưa thấy server 4-9 người, cuộn danh sách xuống một đoạn
+        -- Nếu chưa thấy server, cuộn danh sách xuống một đoạn
         for _, sf in ipairs(browserFrame:GetDescendants()) do
             if sf:IsA("ScrollingFrame") then
                 sf.CanvasPosition = Vector2.new(0, sf.CanvasPosition.Y + 450)
@@ -3156,12 +3207,15 @@ local function spamJoinRealBrowser()
     end
 
     if #joinButtons == 0 then
-        print(string.format("[AutoHop] [Browser UI] Chưa tìm thấy nút Join nào từ %d-%d người trên giao diện.", CONFIG.MinPlayers, CONFIG.MaxPlayers))
+        print("[AutoHop] [Browser UI] Chưa tìm thấy nút Join hợp lệ nào trên giao diện.")
         return false
     end
 
-    -- Sắp xếp: Ưu tiên server trong khoảng 4-9 người (sắp từ ít người đến nhiều người)
+    -- Sắp xếp: Ưu tiên server lý tưởng 4-9 người trước, sau đó mới đến các server khác
     table.sort(joinButtons, function(a, b)
+        if a.isIdeal ~= b.isIdeal then
+            return a.isIdeal and not b.isIdeal
+        end
         return a.playing < b.playing
     end)
 
@@ -3227,17 +3281,10 @@ local function spamJoinRealBrowser()
 end
 
 -- 4. Teleport theo JobId (kết hợp cả __ServerBrowser Remote lẫn TeleportService)
-local function teleportToJobId(id, playing, maxP)
-    -- LỚP BẢO VỆ CỨNG TUYỆT ĐỐI: CHẶN TẤT CẢ SERVER KHÔNG RÕ SỐ NGƯỜI HOẶC >= 10 NGƯỜI HOẶC < 1 NGƯỜI!
-    if not playing or playing < CONFIG.MinPlayers or playing > CONFIG.MaxPlayers or playing >= 10 then
-        print(string.format("[AutoHop] CHẶN KẾT NỐI: Server %s có %s người (Chỉ được phép từ 1 đến 9 người, BẮT BUỘC DƯỚI 10 NGƯỜI)!", tostring(id):sub(1, 8), tostring(playing)))
-        return false
-    end
-
-    HopCache[id] = tick()
-
+-- Hàm đặt script tự động load lại khi chuyển sang server mới
+local function queueScriptOnTeleport()
     pcall(function()
-        local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+        local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport) or (getgenv and getgenv().queue_on_teleport)
         if q then
             if isfile and isfile("lua") then
                 q('task.wait(2); loadfile("lua")()')
@@ -3248,6 +3295,18 @@ local function teleportToJobId(id, playing, maxP)
             end
         end
     end)
+end
+
+-- 4. Teleport theo JobId (kết hợp cả __ServerBrowser Remote lẫn TeleportService)
+local function teleportToJobId(id, playing, maxP)
+    if not id or id == "" or id == game.JobId then return false end
+
+    HopCache[id] = tick()
+    getgenv().BFHopCache = HopCache
+
+    queueScriptOnTeleport()
+
+    print(string.format("[AutoHop] 🚀 Đang kết nối server %s (%s người)...", tostring(id):sub(1, 8), tostring(playing or "?")))
 
     -- Cách A: Gọi trực tiếp Remote của Blox Fruits
     pcall(function()
@@ -3262,11 +3321,11 @@ local function teleportToJobId(id, playing, maxP)
         TeleportService:TeleportToPlaceInstance(PlaceID, id, LocalPlayer)
     end)
 
-    -- Watchdog 1.2s: nếu hiện 772 / 773, lập tức bấm OK và trả về false để chuyển server khác ngay
-    for _ = 1, 8 do
-        task.wait(0.15)
+    -- Theo dõi tối đa 2.5s: nếu hiện lỗi 772 / 773 / Full, lập tức bấm OK và trả về false để chuyển server khác ngay
+    for _ = 1, 12 do
+        task.wait(0.2)
         if dismissRobloxErrorPrompt() then
-            print("[AutoHop] Server " .. tostring(id):sub(1, 10) .. " bị lỗi 772/Full! Đã bấm OK, chuyển server ngay!")
+            print(string.format("[AutoHop] ⚠️ Server %s bị lỗi / Full! Bấm OK và đổi server ngay!", tostring(id):sub(1, 8)))
             return false
         end
     end
@@ -3274,56 +3333,104 @@ local function teleportToJobId(id, playing, maxP)
     return true
 end
 
--- Hàm thực thi Server Hop siêu tốc (API 4-9 người trước -> Remote -> Real Browser)
+-- Hàm thực thi Server Hop siêu tốc (Multi-Source + Tự động cứu nguy khi kẹt)
 local function executeServerHop()
     setHUDStatus("hopping server")
     setHUDFruit(nil)
+    print("[AutoHop] 🚀 BẮT ĐẦU CHU TRÌNH TỰ ĐỘNG HOP SERVER (ĐẢM BẢO 100% CHUYỂN SERVER!)...")
 
+    -- 1. Dọn dẹp trạng thái trước khi hop
+    shouldTween = false
+    getgenv().OnFarm = false
+    restoreCharacterMovement()
+    clearAllFruitESPs()
+
+    -- 2. Đăng ký TeleportInitFailed: Tự động đổi server khi Roblox báo lỗi teleport
+    if not getgenv().BF_TeleportHooked then
+        getgenv().BF_TeleportHooked = true
+        pcall(function()
+            TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+                print(string.format("[AutoHop] ⚠️ TeleportInitFailed: %s. Thử lại ngay lập tức...", tostring(errorMessage)))
+                dismissRobloxErrorPrompt()
+                task.wait(0.5)
+                queueScriptOnTeleport()
+                pcall(function()
+                    TeleportService:Teleport(PlaceID, LocalPlayer)
+                end)
+            end)
+        end)
+    end
+
+    local hopStartTime = tick()
     local hopRound = 0
+
     while true do
         hopRound = hopRound + 1
-        print(string.format("[AutoHop] Bắt đầu vòng hop server #%d (Tìm kiếm server %d - %d người, tránh hacker)...", hopRound, CONFIG.MinPlayers, CONFIG.MaxPlayers))
+        local elapsed = tick() - hopStartTime
+        print(string.format("[AutoHop] ── Vòng tìm kiếm server #%d (Đã chờ %.1fs) ──", hopRound, elapsed))
+        dismissRobloxErrorPrompt()
 
-        -- ƯU TIÊN 1: LẤY QUA ROBLOX PUBLIC API (SIÊU TỐC < 0.3s, chuẩn số người 4-9)
-        local apiCandidates = getServersViaAPISilent()
-        if apiCandidates and #apiCandidates > 0 then
-            table.sort(apiCandidates, function(a, b) return a.playing < b.playing end)
-            print(string.format("[AutoHop] ⚡ API trả về %d server (%d-%d người). Bắt đầu kết nối server tốt nhất...", #apiCandidates, CONFIG.MinPlayers, CONFIG.MaxPlayers))
-            for i = 1, math.min(#apiCandidates, 5) do
-                local srv = apiCandidates[i]
-                print(string.format("[AutoHop] Đang hop vào server %s (%d/%d người)...", tostring(srv.id):sub(1, 8), srv.playing, srv.maxP))
-                local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
-                if not ok then
-                    dismissRobloxErrorPrompt()
-                end
-            end
-        end
-
-        -- ƯU TIÊN 2: QUÉT REMOTE __ServerBrowser (nếu API chưa vào được)
-        local remoteCandidates = getServersViaRemoteSilent()
-        if remoteCandidates and #remoteCandidates > 0 then
-            table.sort(remoteCandidates, function(a, b) return a.playing < b.playing end)
-            print(string.format("[AutoHop] ⚡ Remote trả về %d server (%d-%d người). Đang kết nối...", #remoteCandidates, CONFIG.MinPlayers, CONFIG.MaxPlayers))
-            for i = 1, math.min(#remoteCandidates, 4) do
-                local srv = remoteCandidates[i]
-                local ok = teleportToJobId(srv.id, srv.playing, srv.maxP)
-                if not ok then
-                    dismissRobloxErrorPrompt()
-                end
-            end
-        end
-
-        -- ƯU TIÊN 3: Mở Real Server Browser trên màn hình và spam click nút Join
-        local browserOk = spamJoinRealBrowser()
-        if browserOk then
-            task.wait(1.0)
+        -- 🛡️ CƠ CHẾ CỨU NGUY KHẨN CẤP (CHỐNG KẸT TUYỆT ĐỐI!):
+        -- Nếu thử quá 3 vòng hoặc đã chờ hơn 20s mà vẫn còn trong server:
+        -- BẮT BUỘC GỌI TRỰC TIẾP TeleportService:Teleport(PlaceID) ĐỂ ROBLOX TỰ GHÉP SERVER MỚI!
+        -- TUYỆT ĐỐI KHÔNG BAO GIỜ ĐỂ KẸT TRONG SERVER QUÁ 30 GIÂY!
+        if hopRound >= 4 or elapsed > 20 then
+            print("[AutoHop] ⚡ CỨU NGUY KHẨN CẤP: Đang gọi TeleportService:Teleport(PlaceID) để Roblox tự matchmaking server mới ngay!")
+            setHUDStatus("emergency hop")
+            queueScriptOnTeleport()
+            pcall(function()
+                TeleportService:Teleport(PlaceID, LocalPlayer)
+            end)
+            task.wait(3.0)
             dismissRobloxErrorPrompt()
         end
 
-        HopCache = { [game.JobId] = tick() }
-        getgenv().BFHopCache = HopCache
-        task.wait(CONFIG.HopInterval)
+        local targetServer = nil
+
+        -- BƯỚC 1: Quét Blox Fruits Remote __ServerBrowser (Native nhất, quét trang 1 -> 20)
+        local remoteServers = getServersViaRemote()
+        if remoteServers and #remoteServers > 0 then
+            targetServer = pickBestServer(remoteServers)
+            if targetServer then
+                print(string.format("[AutoHop] ⚡ Remote tìm thấy server: %s (%d/%d người)", tostring(targetServer.id):sub(1, 8), targetServer.playing, targetServer.maxP))
+            end
+        end
+
+        -- BƯỚC 2: Nếu Remote chưa có, quét qua RoProxy + Roblox Public API (Desc & Asc)
+        if not targetServer then
+            local apiServers = getServersViaAPI()
+            if apiServers and #apiServers > 0 then
+                targetServer = pickBestServer(apiServers)
+                if targetServer then
+                    print(string.format("[AutoHop] ⚡ API tìm thấy server: %s (%d/%d người)", tostring(targetServer.id):sub(1, 8), targetServer.playing, targetServer.maxP))
+                end
+            end
+        end
+
+        -- BƯỚC 3: Nếu tìm được server cụ thể, thực hiện kết nối ngay
+        if targetServer then
+            setHUDStatus(string.format("hop: %d plrs", targetServer.playing))
+            local ok = teleportToJobId(targetServer.id, targetServer.playing, targetServer.maxP)
+            if ok then
+                task.wait(3.0)
+            end
+        else
+            -- BƯỚC 4: Nếu cả Remote lẫn API không trả về JobId nào, thử spam nút Join UI (nếu có trên màn hình)
+            local browserOk = spamJoinRealBrowser()
+            if not browserOk then
+                -- BƯỚC 5: KHÔNG CÓ JOBID VÀ KHÔNG CÓ UI -> GỌI NGAY TeleportService:Teleport(PlaceID)!
+                print("[AutoHop] ⚡ Không có danh sách server cụ thể -> Kích hoạt TeleportService:Teleport ngẫu nhiên của Roblox!")
+                setHUDStatus("random hop")
+                queueScriptOnTeleport()
+                pcall(function()
+                    TeleportService:Teleport(PlaceID, LocalPlayer)
+                end)
+                task.wait(2.5)
+            end
+        end
+
         dismissRobloxErrorPrompt()
+        task.wait(1.0)
     end
 end
 
@@ -3467,4 +3574,5 @@ task.spawn(function()
         executeServerHop()
     end
 end)
+
 print("[BloxFruits AutoFruit] Loaded - Kaitun HUD UI Active")
