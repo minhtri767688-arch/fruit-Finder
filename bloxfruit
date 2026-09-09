@@ -28,21 +28,13 @@ if not getgenv().BFScriptStartTime then
     getgenv().BFScriptStartTime = tick()
 end
 
--- Định dạng script uptime theo chuẩn: 1d/1h/1m/1s
+-- Định dạng script uptime theo chuẩn: 0h0m0s (tăng dần: 0h0m1s, 0h0m2s...)
 local function formatUptime(seconds)
     seconds = math.floor(math.max(0, seconds))
-    local d = math.floor(seconds / 86400)
-    local h = math.floor((seconds % 86400) / 3600)
+    local h = math.floor(seconds / 3600)
     local m = math.floor((seconds % 3600) / 60)
     local s = math.floor(seconds % 60)
-
-    local parts = {}
-    if d > 0 then table.insert(parts, d .. "d") end
-    if h > 0 then table.insert(parts, h .. "h") end
-    if m > 0 then table.insert(parts, m .. "m") end
-    table.insert(parts, s .. "s")
-
-    return table.concat(parts, "/")
+    return string.format("%dh%dm%ds", h, m, s)
 end
 
 -- Hàm gửi Discord Webhook tương thích mọi executor (Delta, Wave, Fluxus, Synapse, Electron, Codex, Arceus...)
@@ -382,254 +374,375 @@ local function createKaitunHUD()
     end)
 
     -- Xóa UI cũ nếu có
-    local old = targetParent:FindFirstChild("KaitunFruitHUD") or LocalPlayer.PlayerGui:FindFirstChild("KaitunFruitHUD")
-    if old then old:Destroy() end
+    for _, oldName in ipairs({"MeowHubUI", "kaitun fruit finder", "KaitunFruitHUD"}) do
+        local old = targetParent:FindFirstChild(oldName) or LocalPlayer.PlayerGui:FindFirstChild(oldName)
+        if old then pcall(function() old:Destroy() end) end
+    end
 
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "KaitunFruitHUD"
-    sg.ResetOnSpawn = false
-    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    sg.Parent = targetParent
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "kaitun fruit finder"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = targetParent
 
-    -- Khung chính phong cách Glassmorphism Kaitun (gọn gàng phía trên màn hình, không che Server Browser)
-    local mainFrame = Instance.new("Frame", sg)
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 420, 0, 162)
-    mainFrame.Position = UDim2.new(0.5, -210, 0, 8)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(13, 14, 22)
-    mainFrame.BackgroundTransparency = 0.08
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = true
+    ----------------------------------------------------------------
+    -- LOGO TOGGLE UI (TOP LEFT)
+    ----------------------------------------------------------------
+    local logoBtn = Instance.new("ImageButton")
+    logoBtn.Name = "ToggleLogo"
+    logoBtn.Size = UDim2.new(0, 48, 0, 48)
+    logoBtn.Position = UDim2.new(0, 16, 0, 16)
+    logoBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+    logoBtn.Image = "rbxassetid://88444399942821"
+    logoBtn.AutoButtonColor = false
+    logoBtn.Active = true
+    logoBtn.Draggable = true
+    logoBtn.Parent = gui
 
-    local corner = Instance.new("UICorner", mainFrame)
-    corner.CornerRadius = UDim.new(0, 15)
+    local logoCorner = Instance.new("UICorner", logoBtn)
+    logoCorner.CornerRadius = UDim.new(1, 0)
 
-    -- Gradient chìm tạo hiệu ứng chiều sâu cao cấp
-    local bgGradient = Instance.new("UIGradient", mainFrame)
-    bgGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(26, 24, 38)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(11, 12, 18))
-    })
-    bgGradient.Rotation = 45
+    local logoStroke = Instance.new("UIStroke", logoBtn)
+    logoStroke.Color = Color3.fromRGB(80, 175, 255)
+    logoStroke.Thickness = 2.5
+    logoStroke.Transparency = 0.2
 
-    -- Viền sáng biến đổi 7 màu Rainbow
-    local stroke = Instance.new("UIStroke", mainFrame)
-    stroke.Color = Color3.fromRGB(255, 50, 50)
-    stroke.Thickness = 2
-    stroke.Transparency = 0.05
+    task.spawn(function()
+        while task.wait(0.03) do
+            pcall(function()
+                logoStroke.Transparency = 0.2 + math.abs(math.sin(tick() * 1.5)) * 0.35
+            end)
+        end
+    end)
 
-    -- Header bar: Dot trạng thái + Tiêu đề Kaitun
-    local headerFrame = Instance.new("Frame", mainFrame)
-    headerFrame.Name = "Header"
-    headerFrame.Size = UDim2.new(1, 0, 0, 34)
-    headerFrame.BackgroundTransparency = 1
+    ----------------------------------------------------------------
+    -- MAIN BANNER UI (RỘNG HƠN, HỢP ẢNH, VIỀN NEON SẮC NÉT, KHÔNG AVATAR)
+    ----------------------------------------------------------------
+    local main = Instance.new("Frame")
+    main.Name = "MainBanner"
+    main.Size = UDim2.new(0, 450, 0, 285)
+    main.Position = UDim2.new(0.5, -225, 0.5, -142)
+    main.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Draggable = true
+    main.Visible = true
+    main.Parent = gui
 
-    -- Đèn LED chỉ báo đang chạy (xanh ngọc sáng)
-    local ledDot = Instance.new("Frame", headerFrame)
-    ledDot.Name = "LedDot"
-    ledDot.Size = UDim2.new(0, 9, 0, 9)
-    ledDot.Position = UDim2.new(0, 16, 0.5, -4.5)
-    ledDot.BackgroundColor3 = Color3.fromRGB(50, 255, 140)
-    ledDot.BorderSizePixel = 0
-    local ledCorner = Instance.new("UICorner", ledDot)
-    ledCorner.CornerRadius = UDim.new(1, 0)
+    local corner = Instance.new("UICorner", main)
+    corner.CornerRadius = UDim.new(0, 22)
 
-    -- 1. Tiêu đề: Fruit Finder (Font FredokaOne chuyển 7 màu cực đẹp)
-    local title = Instance.new("TextLabel", headerFrame)
+    -- Viền Neon phát sáng chuẩn Cyberpunk ăn khớp với hình ảnh
+    local neon = Instance.new("UIStroke", main)
+    neon.Color = Color3.fromRGB(90, 185, 255)
+    neon.Thickness = 2.5
+    neon.Transparency = 0.15
+
+    task.spawn(function()
+        while task.wait(0.03) do
+            pcall(function()
+                neon.Transparency = 0.15 + math.abs(math.sin(tick() * 1.4)) * 0.25
+            end)
+        end
+    end)
+
+    -- Background Image (Ảnh Anime / Cat boys theo yêu cầu)
+    local bg = Instance.new("ImageLabel")
+    bg.Name = "BackgroundImage"
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundTransparency = 1
+    bg.Image = "rbxassetid://88444399942821"
+    bg.ImageTransparency = 0.08
+    bg.ScaleType = Enum.ScaleType.Crop
+    bg.Parent = main
+
+    local bgCorner = Instance.new("UICorner", bg)
+    bgCorner.CornerRadius = UDim.new(0, 22)
+
+    -- Dark Overlay tạo độ tương phản cao, làm nổi bật toàn bộ chữ
+    local overlay = Instance.new("Frame")
+    overlay.Name = "DarkOverlay"
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(14, 16, 24)
+    overlay.BackgroundTransparency = 0.45
+    overlay.BorderSizePixel = 0
+    overlay.Parent = main
+
+    local overlayCorner = Instance.new("UICorner", overlay)
+    overlayCorner.CornerRadius = UDim.new(0, 22)
+
+    -- Header: Title & Subtitle (Loại bỏ hoàn toàn avatar theo đúng yêu cầu)
+    local title = Instance.new("TextLabel", main)
     title.Name = "Title"
-    title.Size = UDim2.new(1, -70, 1, 0)
-    title.Position = UDim2.new(0, 32, 0, 0)
+    title.Text = "Fruit finder blox fruit"
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 22
+    title.TextColor3 = Color3.fromRGB(130, 215, 255)
     title.BackgroundTransparency = 1
-    title.Text = "⚡ FRUIT FINDER • KAITUN"
-    title.TextColor3 = Color3.fromRGB(255, 50, 50)
-    title.TextSize = 20
-    title.Font = Enum.Font.FredokaOne
-    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Position = UDim2.new(0, 16, 0, 14)
+    title.Size = UDim2.new(1, -32, 0, 26)
+    title.TextXAlignment = Enum.TextXAlignment.Center
 
-    -- Badge nhỏ phiên bản
-    local badge = Instance.new("TextLabel", headerFrame)
-    badge.Name = "Badge"
-    badge.Size = UDim2.new(0, 42, 0, 18)
-    badge.Position = UDim2.new(1, -54, 0.5, -9)
-    badge.BackgroundColor3 = Color3.fromRGB(30, 32, 48)
-    badge.BackgroundTransparency = 0.2
-    badge.Text = "v2.5"
-    badge.TextColor3 = Color3.fromRGB(160, 180, 220)
-    badge.TextSize = 11
-    badge.Font = Enum.Font.FredokaOne
-    local badgeCorner = Instance.new("UICorner", badge)
-    badgeCorner.CornerRadius = UDim.new(0, 6)
+    local titleStroke = Instance.new("UIStroke", title)
+    titleStroke.Color = Color3.fromRGB(20, 60, 120)
+    titleStroke.Thickness = 1.4
+    titleStroke.Transparency = 0.2
 
-    -- 2. Card Row 1: Status: [ scanning server, taking fruit, hoping server ]
-    local statusCard = Instance.new("Frame", mainFrame)
-    statusCard.Name = "StatusCard"
-    statusCard.Size = UDim2.new(1, -24, 0, 28)
-    statusCard.Position = UDim2.new(0, 12, 0, 38)
-    statusCard.BackgroundColor3 = Color3.fromRGB(20, 22, 33)
-    statusCard.BackgroundTransparency = 0.3
-    statusCard.BorderSizePixel = 0
-    local statusCorner = Instance.new("UICorner", statusCard)
-    statusCorner.CornerRadius = UDim.new(0, 8)
+    local sub = Instance.new("TextLabel", main)
+    sub.Name = "Subtitle"
+    sub.Text = "made by @4h8q."
+    sub.Font = Enum.Font.GothamBold
+    sub.TextSize = 13
+    sub.TextColor3 = Color3.fromRGB(175, 220, 255)
+    sub.BackgroundTransparency = 1
+    sub.Position = UDim2.new(0, 16, 0, 42)
+    sub.Size = UDim2.new(1, -32, 0, 18)
+    sub.TextXAlignment = Enum.TextXAlignment.Center
 
+    local subStroke = Instance.new("UIStroke", sub)
+    subStroke.Color = Color3.fromRGB(25, 45, 80)
+    subStroke.Thickness = 1
+    subStroke.Transparency = 0.3
+
+    -- Container Info Cards
+    local infoContainer = Instance.new("Frame", main)
+    infoContainer.Name = "InfoContainer"
+    infoContainer.Size = UDim2.new(1, -32, 0, 210)
+    infoContainer.Position = UDim2.new(0, 16, 0, 68)
+    infoContainer.BackgroundTransparency = 1
+
+    local function createInfoCard(yPos, height)
+        local card = Instance.new("Frame", infoContainer)
+        card.Size = UDim2.new(1, 0, 0, height or 28)
+        card.Position = UDim2.new(0, 0, 0, yPos)
+        card.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
+        card.BackgroundTransparency = 0.38
+        card.BorderSizePixel = 0
+        local c = Instance.new("UICorner", card)
+        c.CornerRadius = UDim.new(0, 8)
+        local s = Instance.new("UIStroke", card)
+        s.Color = Color3.fromRGB(70, 150, 230)
+        s.Thickness = 1
+        s.Transparency = 0.6
+        return card
+    end
+
+    -- 1. Status: ( choosing team ) ( scanning server ) ( collect fruit ) ( hopping server )
+    local statusCard = createInfoCard(0, 30)
     local statusLabel = Instance.new("TextLabel", statusCard)
     statusLabel.Name = "Status"
-    statusLabel.Size = UDim2.new(1, -12, 1, 0)
-    statusLabel.Position = UDim2.new(0, 6, 0, 0)
+    statusLabel.Size = UDim2.new(1, -16, 1, 0)
+    statusLabel.Position = UDim2.new(0, 8, 0, 0)
     statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "Status: scanning server"
-    statusLabel.TextColor3 = Color3.fromRGB(255, 205, 50)
+    statusLabel.Font = Enum.Font.GothamBold
     statusLabel.TextSize = 15
-    statusLabel.Font = Enum.Font.FredokaOne
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+    statusLabel.Text = "Status: choosing team"
+    statusLabel.TextColor3 = Color3.fromRGB(255, 170, 60)
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-    -- 3. Card Row 2: Fruit found: [ fruit name ] [ rarity ] hoặc ...
-    local fruitCard = Instance.new("Frame", mainFrame)
-    fruitCard.Name = "FruitCard"
-    fruitCard.Size = UDim2.new(1, -24, 0, 28)
-    fruitCard.Position = UDim2.new(0, 12, 0, 72)
-    fruitCard.BackgroundColor3 = Color3.fromRGB(20, 22, 33)
-    fruitCard.BackgroundTransparency = 0.3
-    fruitCard.BorderSizePixel = 0
-    local fruitCorner = Instance.new("UICorner", fruitCard)
-    fruitCorner.CornerRadius = UDim.new(0, 8)
+    local statusTextStroke = Instance.new("UIStroke", statusLabel)
+    statusTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    statusTextStroke.Thickness = 1
+    statusTextStroke.Transparency = 0.2
 
+    -- 2. Fruit Found: fruit found: ( unknow ) hoặc ( fruit name )
+    local fruitCard = createInfoCard(34, 30)
     local fruitLabel = Instance.new("TextLabel", fruitCard)
     fruitLabel.Name = "FruitFound"
-    fruitLabel.Size = UDim2.new(1, -12, 1, 0)
-    fruitLabel.Position = UDim2.new(0, 6, 0, 0)
+    fruitLabel.Size = UDim2.new(1, -16, 1, 0)
+    fruitLabel.Position = UDim2.new(0, 8, 0, 0)
     fruitLabel.BackgroundTransparency = 1
-    fruitLabel.Text = "Fruit found: ..."
-    fruitLabel.TextColor3 = Color3.fromRGB(210, 210, 210)
-    fruitLabel.TextSize = 14
-    fruitLabel.Font = Enum.Font.FredokaOne
-    fruitLabel.TextXAlignment = Enum.TextXAlignment.Center
+    fruitLabel.Font = Enum.Font.GothamBold
+    fruitLabel.TextSize = 15
+    fruitLabel.Text = "fruit found: none"
+    fruitLabel.TextColor3 = Color3.fromRGB(225, 235, 245)
+    fruitLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-    -- 4. Card Row 3: Stats Row (Time / Uptime + Server Player Count)
-    local statsCard = Instance.new("Frame", mainFrame)
-    statsCard.Name = "StatsCard"
-    statsCard.Size = UDim2.new(1, -24, 0, 38)
-    statsCard.Position = UDim2.new(0, 12, 0, 106)
-    statsCard.BackgroundTransparency = 1
+    local fruitTextStroke = Instance.new("UIStroke", fruitLabel)
+    fruitTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    fruitTextStroke.Thickness = 1
+    fruitTextStroke.Transparency = 0.2
 
-    -- Left: Time / Script Uptime
-    local timeBox = Instance.new("Frame", statsCard)
-    timeBox.Name = "TimeBox"
-    timeBox.Size = UDim2.new(0.58, -4, 1, 0)
-    timeBox.Position = UDim2.new(0, 0, 0, 0)
-    timeBox.BackgroundColor3 = Color3.fromRGB(20, 22, 33)
-    timeBox.BackgroundTransparency = 0.3
-    timeBox.BorderSizePixel = 0
-    local timeCorner = Instance.new("UICorner", timeBox)
-    timeCorner.CornerRadius = UDim.new(0, 8)
+    -- 3. Rarity: rarity: [ common, rare, epic, legendary, mythical )
+    local rarityCard = createInfoCard(68, 30)
+    local rarityLabel = Instance.new("TextLabel", rarityCard)
+    rarityLabel.Name = "Rarity"
+    rarityLabel.Size = UDim2.new(1, -16, 1, 0)
+    rarityLabel.Position = UDim2.new(0, 8, 0, 0)
+    rarityLabel.BackgroundTransparency = 1
+    rarityLabel.Font = Enum.Font.GothamBold
+    rarityLabel.TextSize = 15
+    rarityLabel.Text = "rarity: none"
+    rarityLabel.TextColor3 = Color3.fromRGB(180, 195, 210)
+    rarityLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-    local timeLabel = Instance.new("TextLabel", timeBox)
-    timeLabel.Name = "Time"
-    timeLabel.Size = UDim2.new(1, -10, 1, 0)
-    timeLabel.Position = UDim2.new(0, 5, 0, 0)
+    local rarityTextStroke = Instance.new("UIStroke", rarityLabel)
+    rarityTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    rarityTextStroke.Thickness = 1
+    rarityTextStroke.Transparency = 0.2
+
+    -- 4. Uptime & Players Row (uptimes: 0h0m0s | players: ?/12)
+    local statsRow = Instance.new("Frame", infoContainer)
+    statsRow.Size = UDim2.new(1, 0, 0, 30)
+    statsRow.Position = UDim2.new(0, 0, 0, 102)
+    statsRow.BackgroundTransparency = 1
+
+    -- Left Box: uptimes: 0h0m0s
+    local timeCard = Instance.new("Frame", statsRow)
+    timeCard.Size = UDim2.new(0.58, -4, 1, 0)
+    timeCard.Position = UDim2.new(0, 0, 0, 0)
+    timeCard.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
+    timeCard.BackgroundTransparency = 0.38
+    timeCard.BorderSizePixel = 0
+    local tc = Instance.new("UICorner", timeCard)
+    tc.CornerRadius = UDim.new(0, 8)
+    local ts = Instance.new("UIStroke", timeCard)
+    ts.Color = Color3.fromRGB(70, 150, 230)
+    ts.Thickness = 1
+    ts.Transparency = 0.6
+
+    local timeLabel = Instance.new("TextLabel", timeCard)
+    timeLabel.Name = "Uptime"
+    timeLabel.Size = UDim2.new(1, -12, 1, 0)
+    timeLabel.Position = UDim2.new(0, 8, 0, 0)
     timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "⏱️ Time: 0s"
-    timeLabel.TextColor3 = Color3.fromRGB(120, 225, 255)
-    timeLabel.TextSize = 13
-    timeLabel.Font = Enum.Font.FredokaOne
-    timeLabel.TextXAlignment = Enum.TextXAlignment.Center
+    timeLabel.Font = Enum.Font.GothamBold
+    timeLabel.TextSize = 14
+    timeLabel.Text = "uptimes: 0h0m0s"
+    timeLabel.TextColor3 = Color3.fromRGB(200, 240, 255)
+    timeLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-    -- Right: Players Count (?/12)
-    local playersBox = Instance.new("Frame", statsCard)
-    playersBox.Name = "PlayersBox"
-    playersBox.Size = UDim2.new(0.42, -4, 1, 0)
-    playersBox.Position = UDim2.new(0.58, 4, 0, 0)
-    playersBox.BackgroundColor3 = Color3.fromRGB(20, 22, 33)
-    playersBox.BackgroundTransparency = 0.3
-    playersBox.BorderSizePixel = 0
-    local playersCorner = Instance.new("UICorner", playersBox)
-    playersCorner.CornerRadius = UDim.new(0, 8)
+    local timeTextStroke = Instance.new("UIStroke", timeLabel)
+    timeTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    timeTextStroke.Thickness = 1
+    timeTextStroke.Transparency = 0.2
 
-    local playersLabel = Instance.new("TextLabel", playersBox)
+    -- Right Box: players: ?/12
+    local playersCard = Instance.new("Frame", statsRow)
+    playersCard.Size = UDim2.new(0.42, -4, 1, 0)
+    playersCard.Position = UDim2.new(0.58, 4, 0, 0)
+    playersCard.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
+    playersCard.BackgroundTransparency = 0.38
+    playersCard.BorderSizePixel = 0
+    local pc = Instance.new("UICorner", playersCard)
+    pc.CornerRadius = UDim.new(0, 8)
+    local ps = Instance.new("UIStroke", playersCard)
+    ps.Color = Color3.fromRGB(70, 150, 230)
+    ps.Thickness = 1
+    ps.Transparency = 0.6
+
+    local playersLabel = Instance.new("TextLabel", playersCard)
     playersLabel.Name = "Players"
-    playersLabel.Size = UDim2.new(1, -6, 1, 0)
-    playersLabel.Position = UDim2.new(0, 3, 0, 0)
+    playersLabel.Size = UDim2.new(1, -8, 1, 0)
+    playersLabel.Position = UDim2.new(0, 6, 0, 0)
     playersLabel.BackgroundTransparency = 1
-    playersLabel.Text = "👥 " .. tostring(#Players:GetPlayers()) .. "/12"
-    playersLabel.TextColor3 = Color3.fromRGB(215, 185, 255)
-    playersLabel.TextSize = 13
-    playersLabel.Font = Enum.Font.FredokaOne
+    playersLabel.Font = Enum.Font.GothamBold
+    playersLabel.TextSize = 14
+    playersLabel.Text = "players: " .. tostring(#Players:GetPlayers()) .. "/12"
+    playersLabel.TextColor3 = Color3.fromRGB(220, 205, 255)
     playersLabel.TextXAlignment = Enum.TextXAlignment.Center
 
-    -- HIỆU ỨNG CHUYỂN ĐỔI 7 MÀU RAINBOW CỰC MƯỢT (0.2s, siêu nhẹ, 0% CPU)
-    task.spawn(function()
-        local hue = 0
-        while true do
-            task.wait(0.2)
-            hue = (hue + 0.02) % 1
-            local rainbow = Color3.fromHSV(hue, 0.85, 1)
+    local playersTextStroke = Instance.new("UIStroke", playersLabel)
+    playersTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    playersTextStroke.Thickness = 1
+    playersTextStroke.Transparency = 0.2
+
+    -- 5. FPS & Ping Card (NO 35%CV!)
+    local fpsPingCard = createInfoCard(136, 28)
+    local fpsPingLabel = Instance.new("TextLabel", fpsPingCard)
+    fpsPingLabel.Name = "FpsPing"
+    fpsPingLabel.Size = UDim2.new(1, -16, 1, 0)
+    fpsPingLabel.Position = UDim2.new(0, 8, 0, 0)
+    fpsPingLabel.BackgroundTransparency = 1
+    fpsPingLabel.Font = Enum.Font.GothamBold
+    fpsPingLabel.TextSize = 13
+    fpsPingLabel.Text = "fps: 60 | pings: 0 ms"
+    fpsPingLabel.TextColor3 = Color3.fromRGB(160, 215, 255)
+    fpsPingLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+    local fpsTextStroke = Instance.new("UIStroke", fpsPingLabel)
+    fpsTextStroke.Color = Color3.fromRGB(15, 20, 30)
+    fpsTextStroke.Thickness = 1
+    fpsTextStroke.Transparency = 0.2
+
+    -- Toggle logo click event
+    local uiOpen = true
+    logoBtn.MouseButton1Click:Connect(function()
+        uiOpen = not uiOpen
+        main.Visible = uiOpen
+    end)
+
+    -- Update FPS and Ping (Cập nhật 1 giây/lần, tối ưu 100% không gây drop FPS)
+    local frames, last, fps = 0, tick(), 0
+    RunService.RenderStepped:Connect(function()
+        frames = frames + 1
+        local now = tick()
+        if now - last >= 1 then
+            fps = frames
+            frames = 0
+            last = now
+            local ok, rawPing = pcall(function()
+                return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValueString()
+            end)
+            local cleanPing = "N/A"
+            if ok and rawPing then
+                local stripped = tostring(rawPing):gsub("%s*%b()", ""):gsub("%s+", "")
+                local num = tonumber(stripped)
+                if num then
+                    cleanPing = string.format("%d ms", math.floor(num))
+                else
+                    cleanPing = stripped ~= "" and (stripped .. " ms") or "N/A"
+                end
+            end
             pcall(function()
-                title.TextColor3 = rainbow
-                stroke.Color = rainbow
+                fpsPingLabel.Text = string.format("fps: %d | pings: %s", fps, cleanPing)
             end)
         end
     end)
 
     return {
-        Gui = sg,
+        Gui = gui,
+        Main = main,
         Status = statusLabel,
         Fruit = fruitLabel,
+        Rarity = rarityLabel,
         Time = timeLabel,
-        Players = playersLabel
+        Players = playersLabel,
+        FpsPing = fpsPingLabel
     }
 end
 
 local HUD = createKaitunHUD()
 
 -- ====================================================================
--- ⚡ TỐI ƯU HÓA SIÊU MƯỢT CHO UGPHONE.COM / MOBILE / PC (COPY CHUẨN SCRIPT.LUA DÒNG 1436)
+-- ⚡ TỐI ƯU HÓA SIÊU MƯỢT CHO UGPHONE.COM / MOBILE / PC (KHÔNG LAG, KHÔNG ĐƠ CLIENT)
 -- Giảm tải CPU, triệt tiêu giật lag, tắt bóng đổ/nước/hiệu ứng nặng để chạy 24/7 ổn định
 -- ====================================================================
 local function applyLowCpu()
     pcall(function()
-        local g = game
-        local w = g.Workspace
-        local l = g:GetService("Lighting")
-        local t = w.Terrain
-        t.WaterWaveSize = 0
-        t.WaterWaveSpeed = 0
-        t.WaterReflectance = 0
-        t.WaterTransparency = 0
-        l.GlobalShadows = false
-        l.FogEnd = 9e9
-        l.Brightness = 0
         pcall(function() settings().Rendering.QualityLevel = "Level01" end)
-        for _, v in pairs(g:GetDescendants()) do
-            pcall(function()
-                if v:IsA("Part") or v:IsA("Union") or v:IsA("CornerWedgePart") or v:IsA("TrussPart") then
-                    v.Material = Enum.Material.Plastic
-                    v.Reflectance = 0
-                elseif v:IsA("Decal") or v:IsA("Texture") then
-                    v.Transparency = 1
-                elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
-                    v.Lifetime = NumberRange.new(0)
-                elseif v:IsA("Explosion") then
-                    v.BlastPressure = 1
-                    v.BlastRadius = 1
-                elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") then
-                    v.Enabled = false
-                elseif v:IsA("MeshPart") then
-                    v.Material = Enum.Material.Plastic
-                    v.Reflectance = 0
-                end
-            end)
-        end
-        for _, e in pairs(l:GetChildren()) do
-            pcall(function()
-                if e:IsA("BlurEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect") or e:IsA("BloomEffect") or e:IsA("DepthOfFieldEffect") then
+        local l = game:GetService("Lighting")
+        if l then
+            l.GlobalShadows = false
+            l.FogEnd = 9e9
+            l.Brightness = 0
+            for _, e in ipairs(l:GetChildren()) do
+                if e:IsA("PostEffect") or e:IsA("BlurEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect") or e:IsA("BloomEffect") or e:IsA("DepthOfFieldEffect") then
                     e.Enabled = false
                 end
-            end)
+            end
+        end
+        local t = Workspace.Terrain
+        if t then
+            t.WaterWaveSize = 0
+            t.WaterWaveSpeed = 0
+            t.WaterReflectance = 0
+            t.WaterTransparency = 0
         end
     end)
 end
 
--- Kích hoạt ngầm chế độ Low CPU ngay khi khởi chạy
+-- Kích hoạt ngầm chế độ Low CPU ngay khi khởi chạy (nhẹ nhàng, không giật lag)
 task.spawn(applyLowCpu)
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
@@ -769,54 +882,79 @@ local function autoSelectTeam()
 end
 local autoSelectMarines = autoSelectTeam
 
--- Cập nhật đồng hồ thời gian thực & số lượng người chơi mỗi giây
+-- Cập nhật đồng hồ thời gian thực & số lượng người chơi mỗi giây (uptimes: 0h0m0s, players: ?/12)
 task.spawn(function()
     while true do
         task.wait(1)
-        local elapsed = tick() - getgenv().BFScriptStartTime
+        local elapsed = tick() - (getgenv().BFScriptStartTime or tick())
         pcall(function()
-            HUD.Time.Text = "⏱️ Time: " .. formatUptime(elapsed)
-            if HUD.Players then
-                HUD.Players.Text = "👥 " .. tostring(#Players:GetPlayers()) .. "/12"
+            if HUD.Time then
+                HUD.Time.Text = "uptimes: " .. formatUptime(elapsed)
             end
-            fixScreenAndCamera()
+            if HUD.Players then
+                HUD.Players.Text = "players: " .. tostring(#Players:GetPlayers()) .. "/12"
+            end
         end)
     end
 end)
 
--- Hàm cập nhật trạng thái HUD
+-- Hàm cập nhật trạng thái HUD: Status: ( choosing team ) ( scanning server ) ( collect fruit ) ( hopping server )
 local function setHUDStatus(state)
     pcall(function()
-        if state == "taking fruit" then
-            HUD.Status.Text = "Status: taking fruit"
+        if not HUD or not HUD.Status then return end
+        local stateStr = tostring(state or "")
+        if state == "collect fruit" or state == "taking fruit" then
+            HUD.Status.Text = "Status: collect fruit"
             HUD.Status.TextColor3 = Color3.fromRGB(70, 255, 120) -- Green
-        elseif state == "hoping server" then
-            HUD.Status.Text = "Status: hoping server"
+        elseif state == "hopping server" or state == "hoping server" then
+            HUD.Status.Text = "Status: hopping server"
             HUD.Status.TextColor3 = Color3.fromRGB(80, 200, 255) -- Cyan Blue
         elseif state == "choosing team" then
             HUD.Status.Text = "Status: choosing team"
-            HUD.Status.TextColor3 = Color3.fromRGB(255, 150, 50) -- Orange
+            HUD.Status.TextColor3 = Color3.fromRGB(255, 170, 60) -- Orange
+        elseif string.find(stateStr, "scanning") then
+            HUD.Status.Text = "Status: " .. stateStr
+            HUD.Status.TextColor3 = Color3.fromRGB(255, 215, 60) -- Yellow
         else
-            HUD.Status.Text = "Status: scanning server"
-            HUD.Status.TextColor3 = Color3.fromRGB(255, 200, 50) -- Yellow
+            HUD.Status.Text = "Status: " .. stateStr
+            HUD.Status.TextColor3 = Color3.fromRGB(255, 215, 60) -- Yellow
         end
     end)
 end
 
--- Hàm cập nhật quả tìm thấy
+-- Hàm cập nhật quả tìm thấy & Rarity trên HUD:
+-- fruit found: ( unknow ) hoac ( fruit name )
+-- rarity: [ common,rare,epic,lengedary,mythicl )
 local function setHUDFruit(fruitInfo)
     pcall(function()
+        if not HUD or not HUD.Fruit then return end
         if not fruitInfo then
-            HUD.Fruit.Text = "Fruit found: ..."
-            HUD.Fruit.TextColor3 = Color3.fromRGB(200, 200, 200)
+            HUD.Fruit.Text = "fruit found: none"
+            HUD.Fruit.TextColor3 = Color3.fromRGB(225, 235, 245)
+            if HUD.Rarity then
+                HUD.Rarity.Text = "rarity: none"
+                HUD.Rarity.TextColor3 = Color3.fromRGB(180, 195, 210)
+            end
         else
-            local name = fruitInfo.DisplayName or "Fruit"
-            local rarity = fruitInfo.Rarity or "Common"
-            HUD.Fruit.Text = string.format("Fruit found: %s [%s]", name, rarity)
-            if fruitInfo.Color then
-                HUD.Fruit.TextColor3 = fruitInfo.Color
+            local name = fruitInfo.DisplayName or "unknown"
+            local rarity = fruitInfo.Rarity or "unknown"
+            local lowerName = string.lower(name)
+            local lowerRarity = string.lower(rarity)
+
+            if lowerName == "unknown" or lowerName == "devil fruit" or lowerRarity == "unknown" then
+                HUD.Fruit.Text = "fruit found: unknown"
+                HUD.Fruit.TextColor3 = Color3.fromRGB(255, 95, 95)
+                if HUD.Rarity then
+                    HUD.Rarity.Text = "rarity: unknown"
+                    HUD.Rarity.TextColor3 = Color3.fromRGB(255, 95, 95)
+                end
             else
-                HUD.Fruit.TextColor3 = Color3.fromRGB(255, 215, 0)
+                HUD.Fruit.Text = "fruit found: " .. name
+                HUD.Fruit.TextColor3 = fruitInfo.Color or Color3.fromRGB(255, 220, 80)
+                if HUD.Rarity then
+                    HUD.Rarity.Text = "rarity: " .. lowerRarity
+                    HUD.Rarity.TextColor3 = fruitInfo.Color or Color3.fromRGB(200, 225, 255)
+                end
             end
         end
     end)
@@ -825,70 +963,112 @@ end
 -- ====================================================================
 -- HỆ THỐNG NHẬN DIỆN & PHÁT HIỆN FRUIT TRONG MAP
 -- ====================================================================
+local function getFruitRoot(obj)
+    if not obj then return nil end
+    if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
+        return obj.Handle
+    elseif obj:IsA("Model") then
+        return obj.PrimaryPart or obj:FindFirstChild("Handle") or obj:FindFirstChildOfClass("BasePart")
+    elseif obj:IsA("BasePart") then
+        return obj
+    end
+    return nil
+end
+
+local FruitOriginalNameMap = nil -- Forward declaration
+
 local function isFruitObject(obj)
     if not obj or not obj.Parent then return false end
     if ProcessedFruits[obj] then return false end
 
-    -- Tuyệt đối không bao giờ nhận diện vật phẩm trong Character của bất kỳ người chơi nào hoặc Backpack
-    if obj.Parent:FindFirstChildOfClass("Humanoid") then return false end
+    -- 1. TUYỆT ĐỐI KHÔNG NHẬN DIỆN NPC, BOSS, MOBS, HOẶC PLAYER
+    if obj:FindFirstChildOfClass("Humanoid") then return false end
+    if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Head") then return false end
+    if obj:FindFirstChildOfClass("AnimationController") then return false end
+    if Players:GetPlayerFromCharacter(obj) then return false end
+
+    -- 2. TUYỆT ĐỐI KHÔNG NHẬN DIỆN VẬT PHẨM TRONG CHARACTER/BACKPACK CỦA BẤT KỲ NGƯỜI CHƠI NÀO
+    if obj.Parent and (obj.Parent:FindFirstChildOfClass("Humanoid") or Players:GetPlayerFromCharacter(obj.Parent)) then return false end
     if obj.Parent == LocalPlayer:FindFirstChild("Backpack") then return false end
-    if obj.Parent.Parent and obj.Parent.Parent:FindFirstChildOfClass("Humanoid") then return false end
+    if obj:FindFirstAncestorWhichIsA("Backpack") then return false end
+    if obj:FindFirstAncestorWhichIsA("Player") then return false end
+    if obj:FindFirstAncestorOfClass("Model") and obj:FindFirstAncestorOfClass("Model"):FindFirstChildOfClass("Humanoid") then return false end
 
     local name = string.lower(obj.Name)
 
-    -- 1. LOẠI BỎ TOÀN BỘ VẬT PHẨM NẰM TRONG BLACKLIST
+    -- 3. LOẠI BỎ TOÀN BỘ VẬT PHẨM NẰM TRONG BLACKLIST (Star Hub blacklist + Blox Fruits props)
     for _, bad in ipairs(BlacklistedTerms) do
         if string.find(name, bad) then return false end
     end
 
-    -- 2. BẮT BUỘC PHẢI CÓ HANDLE (BasePart)
-    local handle = obj:FindFirstChild("Handle")
-    if not handle or not handle:IsA("BasePart") then return false end
+    -- 4. BẮT BUỘC PHẢI CÓ ROOT PART HỢP LỆ VÀ KÍCH THƯỚC NHỎ (<= 10 studs)
+    -- Trái ác quỷ chỉ là vật phẩm nhỏ cầm tay (1-4 studs). Mọi công trình map, sàn, tường, bàn thờ > 10 studs -> LOẠI BỎ 100%!
+    local root = getFruitRoot(obj)
+    if not root or not root:IsA("BasePart") then return false end
+    if root.Size.Magnitude > 10 then return false end
 
-    -- 3. BẢO VỆ KÍCH THƯỚC: Trái ác quỷ chỉ là vật phẩm nhỏ cầm tay (kích thước 1-4 studs).
-    -- Mọi công trình map, bàn thờ nhiệm vụ, đài tế, sàn, bục, tường, tượng có kích thước > 10 studs -> LOẠI BỎ 100%!
-    if handle.Size.Magnitude > 10 then return false end
-
-    -- BƯỚC A: NẾU LÀ TOOL (Rơi trên đất trong Workspace)
+    -- BƯỚC A: NẾU LÀ TOOL (Rơi trên đất trong Workspace hoặc drop từ kho)
     if obj:IsA("Tool") then
-        -- Có EatRemote đặc trưng chuẩn 100% của mọi trái Blox Fruits
         if obj:FindFirstChild("EatRemote", true) then return true end
-        -- Có thuộc tính OriginalName của game (ví dụ: Rocket-Rocket, Kitsune-Kitsune)
-        if obj:GetAttribute("OriginalName") or handle:GetAttribute("OriginalName") then return true end
-        -- ToolTip là Blox Fruit
+        if obj:GetAttribute("OriginalName") or root:GetAttribute("OriginalName") then return true end
+        if obj:GetAttribute("FruitName") or root:GetAttribute("FruitName") then return true end
         if obj.ToolTip == "Blox Fruit" then return true end
-        -- Hoặc tên khớp trực tiếp với 1 trái thật trong FruitDatabase
+        if (FruitOriginalNameMap and FruitOriginalNameMap[name]) or FruitDatabase[name] then return true end
         for key in pairs(FruitDatabase) do
             if name:find("%f[%a]" .. key .. "%f[%A]") then return true end
         end
+        if string.find(name, "fruit") then return true end
     end
 
     -- BƯỚC B: NẾU LÀ MODEL TRÁI TỰ NHIÊN SPAWN TRÊN ĐẤT (WILD SPAWNED FRUIT DƯỚI GỐC CÂY)
     if obj:IsA("Model") then
-        -- Có EatRemote hoặc OriginalName
-        if obj:FindFirstChild("EatRemote", true) or obj:GetAttribute("OriginalName") or handle:GetAttribute("OriginalName") then
+        if obj:FindFirstChild("EatRemote", true) then return true end
+        if obj:GetAttribute("OriginalName") or root:GetAttribute("OriginalName") or obj:GetAttribute("FruitName") or root:GetAttribute("FruitName") then
             return true
         end
-        -- Trái tự nhiên spawn tên "Fruit " hoặc "Blox Fruit" hoặc "Devil Fruit" có TouchInterest trên Handle
-        if (name == "fruit " or name == "fruit" or name == "blox fruit" or name == "devil fruit") and handle:FindFirstChild("TouchInterest") then
+        if (name == "fruit " or name == "fruit" or name == "blox fruit" or name == "devil fruit") then
             return true
         end
-        -- Model có tên khớp trực tiếp với 1 trái trong FruitDatabase và Handle có TouchInterest
+        if (FruitOriginalNameMap and FruitOriginalNameMap[name]) or FruitDatabase[name] then
+            return true
+        end
         for key in pairs(FruitDatabase) do
-            if name:find("%f[%a]" .. key .. "%f[%A]") and (handle:FindFirstChild("TouchInterest") or obj.Parent == Workspace or (obj.Parent and (obj.Parent.Name == "Fruit" or obj.Parent.Name == "Drops"))) then
+            if name:find("%f[%a]" .. key .. "%f[%A]") then
                 return true
             end
         end
+        -- Kiểm tra tên các child bên trong Model (chuẩn Star Hub)
+        for _, child in ipairs(obj:GetChildren()) do
+            local cName = string.lower(child.Name)
+            if (FruitOriginalNameMap and FruitOriginalNameMap[cName]) or FruitDatabase[cName] or child:GetAttribute("OriginalName") or child:GetAttribute("FruitName") then
+                return true
+            end
+        end
+        if string.find(name, "fruit") and (root:FindFirstChild("TouchInterest") or obj:FindFirstChild("TouchInterest", true) or obj.Parent == Workspace or (obj.Parent and (obj.Parent.Name == "Fruit" or obj.Parent.Name == "Fruits" or obj.Parent.Name == "Drops" or obj.Parent.Name == "SpawnedFruits"))) then
+            return true
+        end
+    end
+
+    -- BƯỚC C: NẾU LÀ BASEPART (Trái ác quỷ xuất hiện dưới dạng BasePart độc lập)
+    if obj:IsA("BasePart") then
+        if obj:GetAttribute("OriginalName") or obj:GetAttribute("FruitName") then return true end
+        if (name == "fruit " or name == "fruit" or name == "blox fruit" or name == "devil fruit") then return true end
+        if (FruitOriginalNameMap and FruitOriginalNameMap[name]) or FruitDatabase[name] then return true end
+        for key in pairs(FruitDatabase) do
+            if name:find("%f[%a]" .. key .. "%f[%A]") then return true end
+        end
+        if string.find(name, "fruit") and obj:FindFirstChild("TouchInterest") then return true end
     end
 
     return false
 end
 
--- Bảng ánh xạ chính xác 100% tất cả OriginalName trong Blox Fruits về chuẩn Database
-local FruitOriginalNameMap = {
+-- Bảng ánh xạ chính xác 100% tất cả OriginalName, tên rút gọn, và tên biến thể trong Blox Fruits về chuẩn Database
+FruitOriginalNameMap = {
+    -- Double Names (Chuẩn OriginalName từ Server Blox Fruits)
     ["rocket-rocket"]       = "rocket",
     ["spin-spin"]           = "spin",
-    ["blade-blade"]          = "blade",
+    ["blade-blade"]         = "blade",
     ["chop-chop"]           = "blade",
     ["spring-spring"]       = "spring",
     ["bomb-bomb"]           = "bomb",
@@ -939,6 +1119,132 @@ local FruitOriginalNameMap = {
     ["kitsune-kitsune"]     = "kitsune",
     ["dragon-dragon"]       = "dragon",
     ["kilo-kilo"]           = "rocket",
+
+    -- Single Names & Aliases
+    ["rocket"]              = "rocket",
+    ["spin"]                = "spin",
+    ["blade"]               = "blade",
+    ["chop"]                = "blade",
+    ["spring"]              = "spring",
+    ["bomb"]                = "bomb",
+    ["smoke"]               = "smoke",
+    ["spike"]               = "spike",
+    ["flame"]               = "flame",
+    ["falcon"]              = "falcon",
+    ["eagle"]               = "falcon",
+    ["ice"]                 = "ice",
+    ["sand"]                = "sand",
+    ["dark"]                = "dark",
+    ["diamond"]             = "diamond",
+    ["light"]               = "light",
+    ["rubber"]              = "rubber",
+    ["ghost"]               = "ghost",
+    ["revive"]              = "ghost",
+    ["magma"]               = "magma",
+    ["barrier"]             = "creation",
+    ["creation"]            = "creation",
+    ["quake"]               = "quake",
+    ["buddha"]              = "buddha",
+    ["love"]                = "love",
+    ["spider"]              = "spider",
+    ["string"]              = "spider",
+    ["sound"]               = "sound",
+    ["phoenix"]             = "phoenix",
+    ["portal"]              = "portal",
+    ["door"]                = "portal",
+    ["lightning"]           = "rumble",
+    ["rumble"]              = "rumble",
+    ["pain"]                = "pain",
+    ["paw"]                 = "pain",
+    ["blizzard"]            = "blizzard",
+    ["gravity"]             = "gravity",
+    ["t-rex"]               = "t-rex",
+    ["trex"]                = "t-rex",
+    ["mammoth"]             = "mammoth",
+    ["dough"]               = "dough",
+    ["shadow"]              = "shadow",
+    ["venom"]               = "venom",
+    ["gas"]                 = "gas",
+    ["control"]             = "control",
+    ["spirit"]              = "spirit",
+    ["soul"]                = "spirit",
+    ["leopard"]             = "leopard",
+    ["tiger"]               = "leopard",
+    ["yeti"]                = "yeti",
+    ["kitsune"]             = "kitsune",
+    ["dragon"]              = "dragon",
+    ["kilo"]                = "rocket",
+    ["mochi"]               = "dough",
+    ["fox"]                 = "kitsune",
+    ["ryu"]                 = "dragon",
+    ["pika"]                = "light",
+    ["magu"]                = "magma",
+    ["hie"]                 = "ice",
+    ["mera"]                = "flame",
+    ["gura"]                = "quake",
+    ["goro"]                = "rumble",
+    ["tori"]                = "phoenix",
+    ["ope"]                 = "control",
+    ["zushi"]               = "gravity",
+    ["doku"]                = "venom",
+    ["kage"]                = "shadow",
+    ["soru"]                = "spirit",
+    ["nikyu"]               = "pain",
+    ["ito"]                 = "spider",
+
+    -- Stripped Concatenated Names (Khớp chuẩn khi loại bỏ dấu cách và gạch nối)
+    ["rocketrocket"]        = "rocket",
+    ["spinspin"]            = "spin",
+    ["bladeblade"]          = "blade",
+    ["chopchop"]            = "blade",
+    ["springspring"]        = "spring",
+    ["bombbomb"]            = "bomb",
+    ["smokesmoke"]          = "smoke",
+    ["spikespike"]          = "spike",
+    ["flameflame"]          = "flame",
+    ["iceice"]              = "ice",
+    ["sandsand"]            = "sand",
+    ["darkdark"]            = "dark",
+    ["falconfalcon"]        = "falcon",
+    ["eagleeagle"]          = "falcon",
+    ["diamonddiamond"]      = "diamond",
+    ["lightlight"]          = "light",
+    ["rubberrubber"]        = "rubber",
+    ["ghostghost"]          = "ghost",
+    ["reviverevive"]        = "ghost",
+    ["magmamagma"]          = "magma",
+    ["barrierbarrier"]      = "creation",
+    ["creationcreation"]    = "creation",
+    ["quakequake"]          = "quake",
+    ["buddhabuddha"]        = "buddha",
+    ["lovelove"]            = "love",
+    ["spiderspider"]        = "spider",
+    ["stringstring"]        = "spider",
+    ["soundsound"]          = "sound",
+    ["phoenixphoenix"]      = "phoenix",
+    ["portalportal"]        = "portal",
+    ["doordoor"]            = "portal",
+    ["lightninglightning"]  = "rumble",
+    ["rumblerumble"]        = "rumble",
+    ["painpain"]            = "pain",
+    ["pawpaw"]              = "pain",
+    ["blizzardblizzard"]    = "blizzard",
+    ["gravitygravity"]      = "gravity",
+    ["trextrex"]            = "t-rex",
+    ["mammothmammoth"]      = "mammoth",
+    ["doughdough"]          = "dough",
+    ["shadowshadow"]        = "shadow",
+    ["venomvenom"]          = "venom",
+    ["gasgas"]              = "gas",
+    ["controlcontrol"]      = "control",
+    ["spiritspirit"]        = "spirit",
+    ["soulsoul"]            = "spirit",
+    ["leopardleopard"]      = "leopard",
+    ["tigertiger"]          = "leopard",
+    ["yetiyeti"]            = "yeti",
+    ["kitsunekitsune"]      = "kitsune",
+    ["dragondragon"]        = "dragon",
+    ["kilokilo"]            = "rocket",
 }
 
 local SortedFruitKeys = {}
@@ -949,27 +1255,102 @@ table.sort(SortedFruitKeys, function(a, b)
     return #a > #b
 end)
 
+-- ====================================================================
+-- 🧠 HỆ THỐNG NHẬN DẠNG TRÁI SIÊU CHÍNH XÁC (SCAN LÀ BIẾT NGAY TÊN TRÁI TRƯỚC KHI NHẶT)
+-- Quét từ thuộc tính OriginalName, FruitName, Part Name, Mesh, Texture, Decal, Particles...
+-- ====================================================================
 local function identifyFruit(obj)
     if not obj then return nil end
 
-    -- 1. ƯU TIÊN CAO NHẤT: Thuộc tính OriginalName từ game (Chính xác 100%, ví dụ: "Rocket-Rocket", "T-Rex-T-Rex")
-    local origName = nil
-    pcall(function()
-        origName = obj:GetAttribute("OriginalName")
-        if not origName and obj:FindFirstChild("Handle") then
-            origName = obj.Handle:GetAttribute("OriginalName")
+    local candidates = {}
+    local seen = {}
+
+    -- Danh sách các từ khóa rác trong cấu trúc Roblox/Tool tuyệt đối không nhận diện thành trái
+    local badWords = {
+        "controller", "animation", "humanoid", "camera", "billboard", "touch",
+        "screen", "frame", "emitter", "sound", "weld", "mesh", "part", "texture",
+        "particle", "attachment", "highlight", "esp", "click", "prompt", "joint",
+        "handle", "basepart", "meshpart", "specialmesh", "model", "folder", "value"
+    }
+
+    local function addCandidate(val)
+        if not val then return end
+        if type(val) == "string" and val ~= "" then
+            local trimmed = string.gsub(val, "^%s*(.-)%s*$", "%1")
+            local lowerTrimmed = string.lower(trimmed)
+            if trimmed ~= "" and not seen[trimmed] then
+                -- Kiểm tra xem chuỗi có chứa từ khóa rác không (trừ phi chuỗi đó chứa từ 'fruit')
+                local isGarbage = false
+                if not lowerTrimmed:find("fruit") and not FruitOriginalNameMap[lowerTrimmed] and not FruitDatabase[lowerTrimmed] then
+                    for _, bad in ipairs(badWords) do
+                        if lowerTrimmed:find(bad, 1, true) then
+                            isGarbage = true
+                            break
+                        end
+                    end
+                end
+
+                if not isGarbage then
+                    seen[trimmed] = true
+                    table.insert(candidates, trimmed)
+                end
+            end
         end
-        if not origName then
-            local eatRem = obj:FindFirstChild("EatRemote", true)
-            if eatRem and eatRem.Parent then
-                origName = eatRem.Parent:GetAttribute("OriginalName")
+    end
+
+    -- 1. ƯU TIÊN 1: Lấy các thuộc tính định danh chính thức của Blox Fruits
+    pcall(function()
+        addCandidate(obj:GetAttribute("OriginalName"))
+        addCandidate(obj:GetAttribute("FruitName"))
+        addCandidate(obj:GetAttribute("Fruit"))
+        addCandidate(obj:GetAttribute("ItemName"))
+        addCandidate(obj:GetAttribute("DisplayName"))
+        if obj.Name and obj.Name ~= "Fruit " and obj.Name ~= "Fruit" and obj.Name ~= "Blox Fruit" and obj.Name ~= "Devil Fruit" then
+            addCandidate(obj.Name)
+        end
+        if obj:IsA("Tool") and obj.ToolTip and obj.ToolTip ~= "" and obj.ToolTip ~= "Blox Fruit" then
+            addCandidate(obj.ToolTip)
+        end
+    end)
+
+    -- 2. ƯU TIÊN 2: Quét Handle và EatRemote
+    pcall(function()
+        local h = obj:FindFirstChild("Handle")
+        if h then
+            addCandidate(h:GetAttribute("OriginalName"))
+            addCandidate(h:GetAttribute("FruitName"))
+            addCandidate(h:GetAttribute("Fruit"))
+            addCandidate(h:GetAttribute("ItemName"))
+            if h.Name and h.Name ~= "Handle" then
+                addCandidate(h.Name)
+            end
+        end
+        local eatRemote = obj:FindFirstChild("EatRemote", true)
+        if eatRemote and eatRemote.Parent then
+            addCandidate(eatRemote.Parent:GetAttribute("OriginalName"))
+            addCandidate(eatRemote.Parent:GetAttribute("FruitName"))
+            if eatRemote.Parent.Name and eatRemote.Parent.Name ~= "Handle" and eatRemote.Parent.Name ~= "Fruit " and eatRemote.Parent.Name ~= "Fruit" then
+                addCandidate(eatRemote.Parent.Name)
+            end
+        end
+        -- Quét toàn bộ children để lấy tên trái (chuẩn Star Hub: ví dụ mesh part Kitsune bên trong model Fruit )
+        for _, child in ipairs(obj:GetChildren()) do
+            if child.Name and child.Name ~= "Handle" and not string.find(child.Name, "ESP") then
+                addCandidate(child.Name)
+                addCandidate(child:GetAttribute("OriginalName"))
+                addCandidate(child:GetAttribute("FruitName"))
             end
         end
     end)
 
-    if origName and type(origName) == "string" and origName ~= "" then
-        local rawKey = string.lower(origName):gsub("%s+", "")
-        local mapped = FruitOriginalNameMap[rawKey]
+    -- 3. HÀM ĐỐI SOÁT TỪNG CANDIDATE VỚI DATABASE TRÁI ÁC QUỶ (CHUẨN XÁC 100%, CHỐNG MATCH NHẦM CONTROLLER -> CONTROL)
+    local function matchString(str)
+        if not str or str == "" then return nil end
+        local raw = string.lower(str):gsub("^%s*(.-)%s*$", "%1")
+        local clean = raw:gsub("%s+", ""):gsub("[%-_]", "")
+
+        -- A. Khớp chính xác trong FruitOriginalNameMap (ví dụ: "control-control", "rocket-rocket")
+        local mapped = FruitOriginalNameMap[raw] or FruitOriginalNameMap[clean]
         if mapped and FruitDatabase[mapped] then
             local data = FruitDatabase[mapped]
             return {
@@ -980,8 +1361,49 @@ local function identifyFruit(obj)
             }
         end
 
+        -- B. Khớp chính xác clean name trong FruitDatabase
+        if FruitDatabase[clean] then
+            local data = FruitDatabase[clean]
+            return {
+                Key = clean,
+                DisplayName = data.Display .. " Fruit",
+                Rarity = data.Rarity,
+                Color = data.Color,
+            }
+        end
+
+        -- C. Xóa tiền tố/hậu tố "fruit", "blox"
+        local stripped = raw:gsub("fruit", ""):gsub("blox", ""):gsub("[%-_%s]+", "")
+        if stripped ~= "" then
+            local mStrip = FruitOriginalNameMap[stripped] or (FruitDatabase[stripped] and stripped)
+            if mStrip and FruitDatabase[mStrip] then
+                local data = FruitDatabase[mStrip]
+                return {
+                    Key = mStrip,
+                    DisplayName = data.Display .. " Fruit",
+                    Rarity = data.Rarity,
+                    Color = data.Color,
+                }
+            end
+        end
+
+        -- D. Khớp theo SortedFruitKeys: BẮT BUỘC MATCH TỪ ĐỘC LẬP (WORD BOUNDARY) HOẶC LẶP TÊN
         for _, key in ipairs(SortedFruitKeys) do
-            if rawKey:find(key, 1, true) then
+            local cleanKey = key:gsub("[%-_]", "")
+            -- 1. Lặp đôi tên đặc trưng Blox Fruits: rocketrocket, controlcontrol, kitsunekitsune
+            if clean == (cleanKey .. cleanKey) or clean == (cleanKey .. "fruit") or clean == ("fruit" .. cleanKey) then
+                local data = FruitDatabase[key]
+                return {
+                    Key = key,
+                    DisplayName = data.Display .. " Fruit",
+                    Rarity = data.Rarity,
+                    Color = data.Color,
+                }
+            end
+
+            -- 2. Khớp theo word boundary: từ đứng độc lập có khoảng trắng, gạch nối hoặc đầu/cuối chuỗi
+            -- TUYỆT ĐỐI KHÔNG MATCH KHI LÀ CHUỖI CON CỦA "controller" HOẶC "animationcontroller"
+            if raw == key or raw:find("%f[%a]" .. key .. "%f[%A]") or raw:find("^" .. key .. "[%-_%s]") or raw:find("[%-_%s]" .. key .. "$") then
                 local data = FruitDatabase[key]
                 return {
                     Key = key,
@@ -991,73 +1413,35 @@ local function identifyFruit(obj)
                 }
             end
         end
+
+        return nil
     end
 
-    -- 2. ƯU TIÊN 2: Tên của chính đối tượng obj.Name (nếu không phải tên chung chung)
-    local rawName = string.lower(tostring(obj.Name or ""))
-    local cleanName = rawName:gsub("%s+", "")
+    -- Duyệt qua toàn bộ danh sách candidates
+    for _, candidate in ipairs(candidates) do
+        local result = matchString(candidate)
+        if result then
+            return result
+        end
+    end
 
-    if FruitOriginalNameMap[cleanName] then
-        local mapped = FruitOriginalNameMap[cleanName]
-        local data = FruitDatabase[mapped]
+    -- 4. FALLBACK: Khi quả là Model/Tool tên "Fruit " hoặc "Devil Fruit" tự nhiên dưới gốc cây chưa có metadata
+    local rawObjName = string.lower(string.gsub(obj.Name or "", "^%s*(.-)%s*$", "%1"))
+    if rawObjName == "fruit " or rawObjName == "fruit" or rawObjName == "devil fruit" or rawObjName == "blox fruit" or string.find(rawObjName, "fruit") then
         return {
-            Key = mapped,
-            DisplayName = data.Display .. " Fruit",
-            Rarity = data.Rarity,
-            Color = data.Color,
+            Key = "fruit",
+            DisplayName = "Devil Fruit",
+            Rarity = "Rare",
+            Color = Color3.fromRGB(255, 90, 90),
         }
     end
 
-    if rawName ~= "fruit " and rawName ~= "fruit" and rawName ~= "blox fruit" and rawName ~= "devil fruit" then
-        for _, key in ipairs(SortedFruitKeys) do
-            if rawName:find("%f[%a]" .. key .. "%f[%A]") or rawName:find(key, 1, true) then
-                local data = FruitDatabase[key]
-                return {
-                    Key = key,
-                    DisplayName = data.Display .. " Fruit",
-                    Rarity = data.Rarity,
-                    Color = data.Color,
-                }
-            end
-        end
-    end
-
-    -- 3. ƯU TIÊN 3: ToolTip của Tool
-    if obj:IsA("Tool") and obj.ToolTip and obj.ToolTip ~= "" and obj.ToolTip ~= "Blox Fruit" then
-        local tip = string.lower(obj.ToolTip)
-        for _, key in ipairs(SortedFruitKeys) do
-            if tip:find("%f[%a]" .. key .. "%f[%A]") or tip:find(key, 1, true) then
-                local data = FruitDatabase[key]
-                return {
-                    Key = key,
-                    DisplayName = data.Display .. " Fruit",
-                    Rarity = data.Rarity,
-                    Color = data.Color,
-                }
-            end
-        end
-    end
-
-    -- 4. TRÁI HOANG DÃ CHƯA LOAD ĐỦ TÊN (Spawn tên "Fruit " hoặc "Devil Fruit"):
-    -- Hiển thị đúng là "Devil Fruit [Unknown]", TUYỆT ĐỐI KHÔNG match bừa thành Control hay Dragon!
     return {
-        Key = "devilfruit",
-        DisplayName = "Devil Fruit",
-        Rarity = "Unknown",
-        Color = Color3.fromRGB(255, 60, 60),
+        Key = "unknown",
+        DisplayName = "unknown",
+        Rarity = "unknown",
+        Color = Color3.fromRGB(255, 95, 95),
     }
-end
-
-local function getFruitRoot(obj)
-    if not obj then return nil end
-    if obj:IsA("Tool") and obj:FindFirstChild("Handle") then
-        return obj.Handle
-    elseif obj:IsA("Model") then
-        return obj.PrimaryPart or obj:FindFirstChild("Handle") or obj:FindFirstChildOfClass("BasePart")
-    elseif obj:IsA("BasePart") then
-        return obj
-    end
-    return nil
 end
 
 local IgnoredFolders = {
@@ -1190,13 +1574,15 @@ local function createOrUpdateFruitESP(fruit)
             local hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
             local dist = hrp and (hrp.Position - espData.Root.Position).Magnitude or 0
             local meters = math.floor(dist / 3)
-            espData.Label.Text = string.format("%s [ %dm ]", fruit.Name or "Fruit", meters)
+            local rawName = string.lower(tostring(fruit.Name or "Fruit"))
+            local displayESP = (rawName == "unknown" or rawName == "devil fruit" or rawName == "fruit" or rawName == "fruit ") and "unknown fruit" or (rawName:find("fruit") and rawName or (rawName .. " fruit"))
+            espData.Label.Text = string.format("%s [ %dm ]", displayESP, meters)
             espData.Label.TextColor3 = espData.Color
         end
     end)
 end
 
--- Vòng lặp cập nhật khoảng cách mét cho mọi ESP trái đang hiển thị
+-- Vòng lặp cập nhật khoảng cách mét cho mọi ESP trái đang hiển thị & nhận dạng bổ sung nếu ban đầu là unknown
 task.spawn(function()
     while true do
         task.wait(0.25)
@@ -1207,9 +1593,29 @@ task.spawn(function()
                 if not obj or not obj.Parent or not espData.Root or not espData.Root.Parent then
                     removeFruitESP(obj)
                 elseif hrp and espData.Label then
+                    -- NẾU TRÁI TRƯỚC ĐÓ LÀ "unknown" HOẶC "Devil Fruit", THỬ NHẬN DẠNG LẠI (khi metadata/attributes vừa replicate tới)
+                    if espData.Fruit and (espData.Fruit.Name == "unknown" or espData.Fruit.Name == "Devil Fruit" or espData.Fruit.Rarity == "unknown" or espData.Fruit.Rarity == "Unknown") then
+                        local reInfo = identifyFruit(obj)
+                        if reInfo and reInfo.DisplayName ~= "unknown" and reInfo.DisplayName ~= "Devil Fruit" then
+                            espData.Fruit.Info = reInfo
+                            espData.Fruit.Name = reInfo.DisplayName
+                            espData.Fruit.Rarity = reInfo.Rarity
+                            espData.Color = getFruitESPColor(espData.Fruit)
+                            if espData.Highlight then
+                                espData.Highlight.FillColor = espData.Color
+                                espData.Highlight.OutlineColor = espData.Color
+                            end
+                            setHUDFruit(reInfo)
+                            print(string.format("[BloxFruits AutoFruit] ⚡ Nhận dạng bổ sung thành công trước khi nhặt: %s [%s]!", reInfo.DisplayName, reInfo.Rarity))
+                        end
+                    end
+
                     local dist = (hrp.Position - espData.Root.Position).Magnitude
                     local meters = math.floor(dist / 3)
-                    espData.Label.Text = string.format("%s [ %dm ]", (espData.Fruit and espData.Fruit.Name) or "Fruit", meters)
+                    local rawName = string.lower(tostring((espData.Fruit and espData.Fruit.Name) or "Fruit"))
+                    local displayESP = (rawName == "unknown" or rawName == "devil fruit" or rawName == "fruit" or rawName == "fruit ") and "unknown fruit" or (rawName:find("fruit") and rawName or (rawName .. " fruit"))
+                    espData.Label.Text = string.format("%s [ %dm ]", displayESP, meters)
+                    espData.Label.TextColor3 = espData.Color
                 end
             end
         end)
@@ -1238,70 +1644,45 @@ local function scanAllFruits()
                     Rarity = info.Rarity,
                 }
                 table.insert(fruits, fruitEntry)
+                -- CẬP NHẬT NGAY LÊN HUD TRÁI VỪA TÌM THẤY ĐỂ NGƯỜI DÙNG BIẾT TRƯỚC TỨC THÌ!
+                if #fruits == 1 then
+                    setHUDFruit(info)
+                end
                 -- Kích hoạt ngay ESP & Highlight khi phát hiện thấy trái
                 createOrUpdateFruitESP(fruitEntry)
             end
         end
     end
 
-    -- 1. Quét toàn bộ con trực tiếp của Workspace (nơi trái thường tự nhiên spawn dưới các gốc cây)
+    -- 1. Quét toàn bộ con trực tiếp của Workspace (chuẩn Star Hub: workspace:GetChildren())
     for _, child in ipairs(Workspace:GetChildren()) do
         if not IgnoredFolders[child.Name] then
             checkAndAdd(child)
-            -- Quét sâu cấp 2 & 3 vào các folder / model con trong Workspace (Đảo, công trình, cụm cây...)
-            if (child:IsA("Folder") or child:IsA("Model")) and not child:FindFirstChildOfClass("Humanoid") then
-                for _, sub in ipairs(child:GetChildren()) do
-                    checkAndAdd(sub)
-                    if (sub:IsA("Folder") or sub:IsA("Model")) and not sub:FindFirstChildOfClass("Humanoid") then
-                        for _, sub2 in ipairs(sub:GetChildren()) do
-                            checkAndAdd(sub2)
-                        end
-                    end
-                end
-            end
         end
     end
 
-    -- 2. Quét sâu vào các thư mục chứa trái thường gặp trong game
-    for _, folderName in ipairs({"Fruit", "Drops", "Fruits", "Chest", "SpawnedFruits", "Debris", "Misc", "Flora", "Trees", "Spawns"}) do
+    -- 2. Quét các thư mục chứa trái toàn bộ map y chang Star Hub
+    local starHubFolders = {"Fruit", "Drops", "Fruits", "SpawnedFruits", "Chest", "WorldOrigin", "_WorldOrigin"}
+    for _, folderName in ipairs(starHubFolders) do
         local folder = Workspace:FindFirstChild(folderName)
         if folder then
             for _, child in ipairs(folder:GetChildren()) do
                 checkAndAdd(child)
-            end
-        end
-    end
-
-    -- 3. Quét mở rộng toàn bộ Map và các hòn đảo (Whole Map & Every Island)
-    pcall(function()
-        local map = Workspace:FindFirstChild("Map")
-        if map then
-            for _, island in ipairs(map:GetChildren()) do
-                if not IgnoredFolders[island.Name] then
-                    for _, sub in ipairs(island:GetChildren()) do
-                        checkAndAdd(sub)
-                        if sub:IsA("Model") or sub:IsA("Folder") then
-                            for _, sub2 in ipairs(sub:GetChildren()) do
-                                checkAndAdd(sub2)
-                            end
-                        end
+                -- Quét sâu thêm 1 cấp nếu thư mục con chứa items (ví dụ _WorldOrigin.Locations)
+                if child:IsA("Folder") then
+                    for _, subChild in ipairs(child:GetChildren()) do
+                        checkAndAdd(subChild)
                     end
                 end
             end
         end
-    end)
+    end
 
-
-    -- 4. Quét tìm tất cả Tool có EatRemote trong Workspace (Bảo đảm quét sạch 100% dù trái nằm ở bất kỳ đâu)
-    pcall(function()
-        for _, desc in ipairs(Workspace:GetChildren()) do
-            if desc:IsA("Tool") and desc:FindFirstChild("EatRemote", true) then
-                checkAndAdd(desc)
-            end
-        end
-    end)
-
-    return sortFruitsByRarity(fruits)
+    fruits = sortFruitsByRarity(fruits)
+    if #fruits > 0 then
+        setHUDFruit(fruits[1].Info)
+    end
+    return fruits
 end
 
 local function getFruitRank(fruit)
@@ -1562,225 +1943,84 @@ script uptime: `%s`]],
     end
 end
 
-local stopSmoothFly = nil
-local smoothFlyTo = nil
-
--- Hàm khôi phục nhân vật về trạng thái di chuyển bình thường (chống đơ/đứng im 100%)
-local function restoreCharacterMovement()
-    pcall(function()
-        if stopSmoothFly then stopSmoothFly() end
-    end)
-    pcall(function()
-        local char = LocalPlayer.Character
-        if char then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hum then
-                hum.PlatformStand = false
-                hum.Sit = false
-                pcall(function()
-                    hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                    task.wait(0.02)
-                    hum:ChangeState(Enum.HumanoidStateType.Running)
-                end)
-            end
-            if hrp then
-                for _, item in ipairs(hrp:GetChildren()) do
-                    if item:IsA("BodyVelocity") or item:IsA("BodyGyro") or item:IsA("BodyPosition") then
-                        pcall(function() item:Destroy() end)
-                    end
-                end
-                hrp.AssemblyLinearVelocity = Vector3.zero
-                hrp.AssemblyAngularVelocity = Vector3.zero
-                hrp.CanCollide = false
-            end
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    if p ~= hrp and p.Name ~= "HumanoidRootPart" then
-                        p.CanCollide = true
-                    else
-                        p.CanCollide = false
-                    end
-                end
-            end
-        end
-    end)
-end
 
 -- ====================================================================
--- 🍎 HỆ THỐNG AUTO TWEEN TO FRUIT (COPY CHUẨN 100% SCRIPT.LUA + BYPASS FLY XUYÊN TƯỜNG)
--- Dựa trên logic _tp, Rip_Indra, collectFruits & UpdStFruit từ script.lua
--- Bổ sung: Stepped Noclip Bypass để bay xuyên mọi ngọn núi, vách tường 100% không bị server giật lùi
--- An toàn biển: Tự động giữ độ cao tối thiểu Y >= 18 studs để không bao giờ rơi/chìm xuống biển
+-- STAR HUB - AUTO TWEEN TO FRUIT (Correct Original Bypass)
 -- ====================================================================
+local plr = LocalPlayer
+
+local Settings = {
+    ["Bypass Teleport"] = true,
+    TweenSpeed = 300,
+    CollectDistance = 10,
+}
+
+local _G = (getgenv and getgenv()) or _G
+_G.TwFruits = _G.TwFruits or true
+
+-- ==========================================
+-- CORE TWEEN
+-- ==========================================
+local shouldTween = false
+local currentTween = nil
+
 local block = Workspace:FindFirstChild("Rip_Indra")
 if not block then
     block = Instance.new("Part")
+    block.Size = Vector3.new(2,2,2)
     block.Name = "Rip_Indra"
-    block.Size = Vector3.new(1, 1, 1)
-    block.Transparency = 1
     block.Anchored = true
     block.CanCollide = false
     block.CanTouch = false
-    block.CanQuery = false
+    block.Transparency = 1
     block.Parent = Workspace
 end
-local blockfind = Workspace:FindFirstChild(block.Name)
-if blockfind and blockfind ~= block then pcall(function() blockfind:Destroy() end) end
 
-local shouldTween = false
-local activeTween = nil
-
-local sea1 = (game.PlaceId == 2753915549 or game.PlaceId == 85211729168715)
-local sea2 = (game.PlaceId == 4442272183 or game.PlaceId == 79091703265657)
-local sea3 = (game.PlaceId == 7449423635 or game.PlaceId == 100117331123089)
-
--- 1. Quản lý OnFarm theo shouldTween chuẩn 100% script.lua (Dòng 1672)
 task.spawn(function()
-    while task.wait() do
-        if block and block.Parent == Workspace then
-            if shouldTween then
-                getgenv().OnFarm = true
-            else
-                getgenv().OnFarm = false
-            end
-        else
-            getgenv().OnFarm = false
-        end
-    end
-end)
-
--- 2. VÒNG LẶP ĐỒNG BỘ NHÂN VẬT & BLOCK CHUẨN 100% SCRIPT.LUA (Dòng 1673)
--- CỰC KỲ QUAN TRỌNG ĐỂ FIX TRIỆT ĐỂ LỖI KÉO NGƯỢC VỀ BIỂN:
--- Khi OnFarm:
--- Nếu khoảng cách giữa nhân vật và block <= 200 studs: b.CFrame = block.CFrame (bay mượt theo block).
--- Nếu khoảng cách > 200 studs (khi vừa Bypass TP đảo, respawn hoặc đổi đảo):
--- block.CFrame = b.CFrame -> BLOCK LẬP TỨC NHẢY THEO NHÂN VẬT, TUYỆT ĐỐI KHÔNG KÉO NHÂN VẬT NGƯỢC RA BIỂN!
-task.spawn(function()
-    local a = LocalPlayer
-    repeat task.wait() until a.Character and (a.Character.PrimaryPart or a.Character:FindFirstChild("HumanoidRootPart"))
-    local initPart = a.Character.PrimaryPart or a.Character:FindFirstChild("HumanoidRootPart")
-    if initPart and block then
-        block.CFrame = initPart.CFrame
-    end
     while task.wait() do
         pcall(function()
-            if getgenv().OnFarm then
-                if block and block.Parent == Workspace then
-                    local b = a.Character and (a.Character.PrimaryPart or a.Character:FindFirstChild("HumanoidRootPart"))
-                    if b then
-                        if (b.Position - block.Position).Magnitude <= 200 then
-                            b.CFrame = block.CFrame
-                            b.AssemblyLinearVelocity = Vector3.zero
-                            b.AssemblyAngularVelocity = Vector3.zero
-                        else
-                            block.CFrame = b.CFrame
-                        end
-                    end
-                end
-                local c = a.Character
-                if c then
-                    for _, e in pairs(c:GetChildren()) do
-                        if e:IsA("BasePart") then e.CanCollide = false end
-                    end
-                end
-            else
-                local c = a.Character
-                if c then
-                    for _, e in pairs(c:GetChildren()) do
-                        if e:IsA("BasePart") then e.CanCollide = true end
-                    end
-                end
+            if shouldTween and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                local root = plr.Character.HumanoidRootPart
+                local look = root.CFrame.LookVector
+                root.CFrame = CFrame.new(block.Position, block.Position + look)
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            elseif (not shouldTween) and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                local root = plr.Character.HumanoidRootPart
+                block.CFrame = CFrame.new(root.Position)
             end
         end)
     end
 end)
 
--- 3. BodyClip & Noclip chống rớt biển / chống giật lùi chuẩn 100% script.lua (Dòng 2068-2097)
-task.spawn(function()
-    while task.wait() do
-        pcall(function()
-            local char = LocalPlayer.Character
-            local hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
-            if shouldTween or getgenv().OnFarm then
-                if hrp and not hrp:FindFirstChild("BodyClip") then
-                    local noclip = Instance.new("BodyVelocity")
-                    noclip.Name = "BodyClip"
-                    noclip.Parent = hrp
-                    noclip.MaxForce = Vector3.new(100000, 100000, 100000)
-                    noclip.Velocity = Vector3.zero
-                end
-                if char then
-                    for _, no in pairs(char:GetDescendants()) do
-                        if no:IsA("BasePart") then no.CanCollide = false end
-                    end
-                end
-            else
-                if hrp and hrp:FindFirstChild("BodyClip") then
-                    hrp.BodyClip:Destroy()
-                end
-            end
-        end)
-    end
-end)
-
--- 4. BYPASS FLY XUYÊN TƯỜNG (Stepped Noclip - triệt tiêu mọi va chạm trước mỗi bước vật lý)
+-- BYPASS TP BACK & NOCLIP: Chạy trên Stepped trước mỗi bước tính toán vật lý (triệt tiêu 100% va chạm tường/núi)
 RunService.Stepped:Connect(function()
-    if getgenv().OnFarm or shouldTween then
-        local char = LocalPlayer.Character
-        if char then
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") and p.CanCollide then
-                    p.CanCollide = false
-                end
+    if shouldTween and plr.Character then
+        for _, p in pairs(plr.Character:GetDescendants()) do
+            if p:IsA("BasePart") and p.CanCollide then
+                p.CanCollide = false
             end
         end
     end
 end)
 
-stopSmoothFly = function()
-    shouldTween = false
-    getgenv().OnFarm = false
-    if activeTween then
-        pcall(function() activeTween:Cancel() end)
-        activeTween = nil
-    end
-    stopNoClip()
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        local hrp = char:FindFirstChild("HumanoidRootPart")
+-- BYPASS TP BACK: Khóa trọng lực và triệt tiêu gia tốc trên Heartbeat (vô hiệu hóa old support check)
+RunService.Heartbeat:Connect(function()
+    if shouldTween and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+        local root = plr.Character.HumanoidRootPart
+        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
         if hum then
-            hum.PlatformStand = false
-            hum.Sit = false
-            pcall(function()
-                hum:SetStateEnabled(Enum.HumanoidStateType.GettingUp, true)
-                hum:SetStateEnabled(Enum.HumanoidStateType.Running, true)
-                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-                task.wait(0.02)
-                hum:ChangeState(Enum.HumanoidStateType.Running)
-            end)
+            hum.PlatformStand = true
+            if hum.Sit then hum.Sit = false end
         end
-        if hrp then
-            if hrp:FindFirstChild("BodyClip") then
-                pcall(function() hrp.BodyClip:Destroy() end)
-            end
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end
-        for _, p in ipairs(char:GetChildren()) do
-            if p:IsA("BasePart") then
-                p.CanCollide = true
-            end
-        end
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
     end
-end
+end)
 
--- ====================================================================
--- 🌐 CÁC HÀM HỖ TRỢ TỌA ĐỘ, ĐẢO & SPAWN CHUẨN 100% SCRIPT.LUA (Dòng 1696-1859)
--- ====================================================================
+-- ==========================================
+-- HELPERS (đúng gốc Star Hub)
+-- ==========================================
 local function Convert_CFrame(x)
     if not x then return nil end
     if typeof(x) == "Vector3" then
@@ -1881,22 +2121,11 @@ local function WaitForHumanoid()
     return nil
 end
 
-local function getdis(a, b)
-    local char = LocalPlayer.Character
-    local hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
-    local _b = b or (hrp and hrp.CFrame or CFrame.new(0, 0, 0))
-    local posA = Convert_CFrame(a)
-    local posB = Convert_CFrame(_b)
-    if not posA or not posB then return 9e9 end
-    local _a = CFrame.new(posA.X, posB.Y, posA.Z)
-    local _b2 = CFrame.new(posB.X, posB.Y, posB.Z)
-    return (_a.Position - _b2.Position).Magnitude
-end
-
 local function CanBypassTeleport(x)
+    if not Settings["Bypass Teleport"] then return false end
     if CheckLegendaryItems() then return false end
-    if LocalPlayer:FindFirstChild("Data") and LocalPlayer.Data:FindFirstChild("LastSpawnPoint") and LocalPlayer.Data.LastSpawnPoint.Value == "SubmergedIsland" then 
-        return false 
+    if LocalPlayer:FindFirstChild("Data") and LocalPlayer.Data:FindFirstChild("LastSpawnPoint") and LocalPlayer.Data.LastSpawnPoint.Value == "SubmergedIsland" then
+        return false
     end
     if GetDistance(x) <= 2500 then
         return false
@@ -1924,12 +2153,11 @@ local function GetBypassCFrame(x)
     local targetPos = Convert_CFrame(x)
     if not targetPos then return nil end
     targetPos = targetPos.Position
-    
     for _, v in pairs(Spawns:GetChildren()) do
         if v:FindFirstChild("Part") then
-            if (targetPos - HRP.Position).Magnitude >= 2500 
-            and GetSpawnPoint(v.Part) ~= GetSpawnPoint(HRP) 
-            and (v.Part.Position - HRP.Position).Magnitude <= 15000 
+            if (targetPos - HRP.Position).Magnitude >= 2500
+            and GetSpawnPoint(v.Part) ~= GetSpawnPoint(HRP)
+            and (v.Part.Position - HRP.Position).Magnitude <= 15000
             and (v.Part.Position - targetPos).Magnitude <= Max then
                 Max = (v.Part.Position - targetPos).Magnitude
                 Pos = v
@@ -1939,159 +2167,212 @@ local function GetBypassCFrame(x)
     return Pos
 end
 
--- ====================================================================
--- 🚪 HÀM REQUESTENTRANCE CHUYỂN KHU VỰC CỔNG CHUẨN 100% SCRIPT.LUA (Dòng 1903-1967)
--- ====================================================================
-local function requestentrance(pos)
-    local targetPos = typeof(pos) == "CFrame" and pos.Position or (typeof(pos) == "Vector3" and pos or nil)
-    if not targetPos then return end
-
-    local tb = {}
-    if sea1 then
-        tb = {
-            ["Sky3"] = Vector3.new(-7894, 5547, -380),
-            ["Sky3Exit"] = Vector3.new(-4607, 874, -1667),
-            ["UnderWater"] = Vector3.new(61163, 11, 1819),
-            ["Underwater City"] = Vector3.new(61165.19140625, 0.18704631924629211, 1897.379150390625),
-            ["Pirate Village"] = Vector3.new(-1242.4625244140625, 4.787059783935547, 3901.282958984375),
-            ["UnderwaterExit"] = Vector3.new(4050, -1, -1814)
-        }
-    elseif sea2 then
-        tb = {
-            ["Swan Mansion"] = Vector3.new(-390, 332, 673),
-            ["Swan Room"] = Vector3.new(2285, 15, 905),
-            ["Cursed Ship"] = Vector3.new(923, 126, 32852),
-            ["Zombie Island"] = Vector3.new(-6509, 83, -133)
-        }
-    else
-        tb = {
-            ["Hydra Island"] = Vector3.new(5657.88623046875, 1013.0790405273438, -335.4996337890625),
-            ["Mansion"] = Vector3.new(-12462, 375, -7552),
-            ["Castle"] = Vector3.new(-5036, 315, -3179),
-            ["Temple of Time"] = Vector3.new(28286, 14897, 103),
-            ["Greate Tree"] = Vector3.new(3024.1709, 2280.69434, -7325.12793)
-        }
-    end
-
-    local x, y = nil, math.huge
-    for _, v in pairs(tb) do
-        local dist = (v - targetPos).Magnitude
-        if dist < y then
-            y = dist
-            x = v
-        end
-    end
-
-    local char = LocalPlayer.Character
-    local hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
-    local curDist = hrp and (targetPos - hrp.Position).Magnitude or math.huge
-    if x and y and y < curDist and (curDist - y) > 1500 then
-        pcall(function()
-            local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
-            if commF then
-                commF:InvokeServer("requestEntrance", x)
-            end
-        end)
-        task.wait(0.5)
-    end
-end
-
--- ====================================================================
--- 🚀 HỆ THỐNG BYPASS TELEPORT ĐẢO CHUẨN 100% SCRIPT.LUA (Dòng 1861-1882)
--- Đổi LastSpawnPoint + SetSpawnPoint -> PivotTo -> Reset ChangeState(15) -> Spawn trên đảo mới!
--- Hoàn toàn triệt tiêu lỗi bị teleport ngược ra biển:
--- - block.CFrame được đồng bộ sang đảo đích NGAY TRƯỚC KHI PivotTo
--- - Vòng lặp sync có kiểm tra <= 200 studs nên block tuyệt đối KHÔNG kéo người ngược ra biển
--- ====================================================================
 local function BypassTP(Target)
     local Character = LocalPlayer.Character
     if not Character then return false end
-    
     local Humanoid = WaitForHumanoid()
     if not Humanoid or Humanoid.Health <= 0 then return false end
-    
+
     if CanBypassTeleport(Target) then
         local TargetTP = GetBypassCFrame(Target)
         if TargetTP and TargetTP:FindFirstChild("Part") then
-            print(string.format("[AutoFruit] 🚀 Kích hoạt Bypass TP sang đảo: %s...", TargetTP.Name))
-            setHUDStatus("bypass tp: " .. TargetTP.Name)
-
-            -- 1. Dừng tween và OnFarm trước khi reset
             shouldTween = false
-            getgenv().OnFarm = false
-            if activeTween then
-                pcall(function() activeTween:Cancel() end)
-                activeTween = nil
+            if currentTween then
+                pcall(function() currentTween:Cancel() end)
+                currentTween = nil
             end
 
-            -- 2. Đồng bộ CFrame của block tới điểm spawn trên đảo đích ngay lập tức
-            if block then
-                block.CFrame = TargetTP.Part.CFrame
-            end
-
-            -- 3. Tắt LastSpawnPoint script để chống game tự ghi đè đảo cũ (chuẩn 100% script.lua dòng 1871)
             pcall(function()
                 if Character:FindFirstChild("LastSpawnPoint") then
                     Character.LastSpawnPoint.Disabled = true
                 end
+                local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+                if commF then
+                    commF:InvokeServer("SetLastSpawnPoint", TargetTP.Name)
+                    commF:InvokeServer("SetSpawnPoint")
+                end
+                Character:PivotTo(TargetTP.Part.CFrame)
+                Humanoid:ChangeState(15) -- đúng gốc Star Hub
             end)
 
-            -- 4. Đặt spawn point đảo mới qua Remote CommF_ (chuẩn 100% script.lua dòng 1872-1873)
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("SetLastSpawnPoint", TargetTP.Name)
-            end)
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("SetSpawnPoint")
-            end)
-
-            -- 5. Pivot tức thì đến điểm spawn đảo đích và reset (ChangeState 15 chuẩn 100% script.lua dòng 1874-1875)
-            Character:PivotTo(TargetTP.Part.CFrame)
-            pcall(function()
-                Humanoid:ChangeState(15)
-            end)
-            pcall(function()
-                Humanoid.Health = 0
-            end)
-            
-            -- 6. Chờ nhân vật hồi sinh mượt mà trên đảo đích (chuẩn 100% script.lua dòng 1877-1879)
-            local t0 = tick()
-            repeat 
-                task.wait(0.05) 
-            until (LocalPlayer.Character and WaitForHumanoid() and WaitForHumanoid().Health > 0) or (tick() - t0 > 7)
-            
-            task.wait(0.5)
+            repeat
+                task.wait(0.1)
+            until LocalPlayer.Character and WaitForHumanoid() and WaitForHumanoid().Health > 0
+            task.wait(0.7)
 
             local newChar = LocalPlayer.Character
-            local newPart = newChar and (newChar.PrimaryPart or newChar:FindFirstChild("HumanoidRootPart"))
-            if newPart and block then
-                block.CFrame = newPart.CFrame
+            local newRoot = newChar and (newChar.PrimaryPart or newChar:FindFirstChild("HumanoidRootPart"))
+            if newRoot and block then
+                block.CFrame = newRoot.CFrame
             end
-            print(string.format("[AutoFruit] ✅ Đã hồi sinh thành công trên đảo %s! Sẵn sàng bay lấy quả.", TargetTP.Name))
             return true
         end
     end
     return false
 end
 
--- ====================================================================
--- 🍎 HỆ THỐNG COLLECT FRUITS & STORE FRUIT (COPY CHUẨN 100% TỪ SCRIPT.LUA)
--- ====================================================================
--- collectFruits: Copy chuẩn 100% script.lua dòng 1563 - Hút mọi Handle trái trong Workspace về người
-local function collectFruits(Succes)
-    if Succes then
-        local char = LocalPlayer.Character
-        local hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
-        if not hrp then return end
-        for _, v1 in pairs(Workspace:GetChildren()) do
-            if string.find(v1.Name, "Fruit") and v1:FindFirstChild("Handle") then
-                v1.Handle.CFrame = hrp.CFrame
-                v1.Handle.AssemblyLinearVelocity = Vector3.zero
-            end
+-- ==========================================
+-- _TP & STOP TWEEN (chuẩn Star Hub gốc)
+-- ==========================================
+local function stopTween()
+    shouldTween = false
+    if currentTween then
+        pcall(function() currentTween:Cancel() end)
+        currentTween = nil
+    end
+    local char = plr.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        local root = char.HumanoidRootPart
+        if root:FindFirstChild("BodyClip") then
+            pcall(function() root.BodyClip:Destroy() end)
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.PlatformStand = false
+            hum.Sit = false
+        end
+        for _, p in pairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = true end
         end
     end
 end
 
--- UpdStFruit: Copy chuẩn 100% script.lua dòng 1554 - Cất sạch toàn bộ trái trong túi vào kho
+local function restoreCharacterMovement()
+    stopTween()
+end
+
+local function stopSmoothFly()
+    stopTween()
+end
+
+local function _tp(target)
+    local gg = Convert_CFrame(target)
+    if not gg then return end
+
+    -- An toàn biển: Luôn giữ Y tối thiểu >= 18 studs chống chìm biển
+    if gg.Y < 18 then
+        gg = CFrame.new(gg.X, 18, gg.Z)
+    end
+
+    local char = plr.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    local root = char.HumanoidRootPart
+
+    -- 1. Nếu cần bypass teleport sang đảo xa (> 2500 studs):
+    if CanBypassTeleport(gg) then
+        BypassTP(gg)
+        task.wait(0.8)
+        char = plr.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+        root = char.HumanoidRootPart
+    end
+
+    char = plr.Character or char
+    root = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
+    if not root then return end
+
+    local dist = (gg.Position - root.Position).Magnitude
+    if dist <= Settings.CollectDistance then
+        root.CFrame = gg
+        return true
+    end
+
+    shouldTween = true
+
+    if not root:FindFirstChild("BodyClip") then
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "BodyClip"
+        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.Velocity = Vector3.new(0, 0, 0)
+        bv.Parent = root
+    end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = true
+        if hum.Sit then hum.Sit = false end
+    end
+
+    if currentTween then pcall(function() currentTween:Cancel() end) end
+
+    -- Hàm thực hiện bay mượt mà đến 1 điểm
+    local function flyToPoint(targetCF)
+        if not shouldTween or not targetCF then return end
+        local cChar = plr.Character
+        local cHrp = cChar and (cChar.PrimaryPart or cChar:FindFirstChild("HumanoidRootPart"))
+        if not cHrp then return end
+
+        local d = (targetCF.Position - cHrp.Position).Magnitude
+        if d <= 5 then
+            block.CFrame = targetCF
+            cHrp.CFrame = targetCF
+            return
+        end
+
+        local time = math.clamp(d / Settings.TweenSpeed, 0.15, 28)
+        local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+        block.CFrame = CFrame.new(cHrp.Position)
+        currentTween = TweenService:Create(block, tweenInfo, {CFrame = targetCF})
+        currentTween:Play()
+
+        local t0 = tick()
+        while shouldTween and currentTween and currentTween.PlaybackState == Enum.PlaybackState.Playing do
+            task.wait(0.05)
+            if not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
+                break
+            end
+            local curH = plr.Character.HumanoidRootPart
+            if (targetCF.Position - curH.Position).Magnitude <= Settings.CollectDistance then
+                break
+            end
+            if (tick() - t0) > (time + 2) then
+                break
+            end
+        end
+
+        if currentTween then
+            pcall(function() currentTween:Cancel() end)
+            currentTween = nil
+        end
+        block.CFrame = targetCF
+        if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            plr.Character.HumanoidRootPart.CFrame = targetCF
+        end
+    end
+
+    local horizDist = (Vector3.new(gg.X, 0, gg.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+
+    -- 2. BYPASS TP BACK: Nếu đường bay xa (> 100 studs) qua đảo hoặc qua núi:
+    -- Nâng độ cao lên tầng trời (cruise altitude) để bay qua mọi tường, núi, công trình.
+    -- Triệt tiêu hoàn toàn lỗi server raycast va chạm địa hình và lỗi "tp back to old support"!
+    if horizDist > 100 then
+        local cruiseY = math.clamp(math.max(root.Position.Y, gg.Y, 260), 260, 360)
+
+        -- Chặng 1: Bay lên độ cao an toàn nếu đang ở thấp
+        if root.Position.Y < cruiseY - 20 then
+            flyToPoint(CFrame.new(root.Position.X, cruiseY, root.Position.Z))
+        end
+
+        -- Chặng 2: Bay ngang trên tầng trời thênh thang không có vật cản
+        flyToPoint(CFrame.new(gg.X, cruiseY, gg.Z))
+
+        -- Chặng 3: Hạ cánh xuống đúng vị trí quả (gg + Vector3.new(0, 4, 0))
+        flyToPoint(CFrame.new(gg.Position + Vector3.new(0, 4, 0)))
+    else
+        -- Cự ly gần (<= 100 studs): Bay thẳng tới vị trí trên quả
+        flyToPoint(CFrame.new(gg.Position + Vector3.new(0, 4, 0)))
+    end
+
+    return currentTween
+end
+
+local function tweenToFruit(targetCF, customSpeed)
+    return _tp(targetCF)
+end
+
+-- ====================================================================
+-- 🍎 HỆ THỐNG CẤT KHO STORE FRUIT (CHUẨN 100% SCRIPT.LUA)
+-- ====================================================================
 local function UpdStFruit()
     local storedAny = false
     pcall(function()
@@ -2128,104 +2409,15 @@ local function UpdStFruit()
 end
 
 -- ====================================================================
--- ✈️ AUTO TWEEN TO FRUIT / _TP CHUẨN 100% SCRIPT.LUA (Dòng 1969-2038)
--- Kết hợp BypassTP đảo xa + requestentrance + Tween 300 studs/s + BodyClip & Noclip
--- ====================================================================
-local function _tp(target)
-    local gg = Convert_CFrame(target)
-    if not gg then return false end
-
-    -- An toàn biển: Tự động nâng Y tối thiểu >= 18 studs để tuyệt đối không rơi/chìm xuống nước biển
-    if gg.Y < 18 then
-        gg = CFrame.new(gg.X, 18, gg.Z)
-    end
-    
-    local character = LocalPlayer.Character
-    if not character or not (character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")) then return false end
-    local rootPart = character.PrimaryPart or character:FindFirstChild("HumanoidRootPart")
-    
-    -- 1. Nếu ở đảo xa (>= 2500 studs): Kích hoạt BypassTP sang đảo đích (chuẩn script.lua dòng 1986)
-    pcall(function()
-        if CanBypassTeleport(gg) then
-            BypassTP(gg)
-            task.wait(0.5)
-        end
-    end)
-    
-    -- 2. Chuyển map / cổng nếu cần thiết (requestentrance chuẩn script.lua dòng 1993)
-    pcall(function()
-        requestentrance(gg)
-    end)
-    
-    -- Lấy lại character & rootPart mới sau khi hồi sinh trên đảo đích
-    character = LocalPlayer.Character or character
-    rootPart = character and (character.PrimaryPart or character:FindFirstChild("HumanoidRootPart"))
-    if not rootPart then return false end
-    
-    local distance = (gg.Position - rootPart.Position).Magnitude
-    if distance < 4 then
-        if block then block.CFrame = gg end
-        return true
-    end
-
-    -- Bắt đầu tween cực mượt tới quả (tốc độ chuẩn 300 studs/s từ script.lua dòng 2019)
-    block.CFrame = rootPart.CFrame
-    shouldTween = true
-    getgenv().OnFarm = true
-    
-    local tweenDuration = math.max(distance / 300, 0.08)
-    local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
-    local tween = TweenService:Create(block, tweenInfo, { CFrame = gg })    
-    activeTween = tween
-    
-    local hum = character:FindFirstChildOfClass("Humanoid")
-    if hum and hum.Sit == true then
-        hum.Sit = false
-        block.CFrame = CFrame.new(block.Position.X, gg.Y, block.Position.Z)
-    end  
-    
-    tween:Play()    
-    
-    local startTime = tick()
-    while tween.PlaybackState == Enum.PlaybackState.Playing and shouldTween do 
-        local curChar = LocalPlayer.Character
-        local curHrp = curChar and (curChar.PrimaryPart or curChar:FindFirstChild("HumanoidRootPart"))
-        if curHrp then
-            local d = (curHrp.Position - gg.Position).Magnitude
-            -- Hút trái từ khoảng cách 30 studs trước khi tới nơi (chuẩn script.lua dòng 1563)
-            if d <= 30 then
-                collectFruits(true)
-            end
-            if d <= 3 then
-                break
-            end
-        end
-        if (tick() - startTime) > (tweenDuration + 1.2) then
-            break
-        end
-        task.wait(0.04) 
-    end 
-    
-    pcall(function() tween:Cancel() end)
-    activeTween = nil
-    if block then block.CFrame = gg end
-    
-    return true
-end
-
-local function tweenToFruit(targetCF, customSpeed)
-    return _tp(targetCF)
-end
-
--- ====================================================================
--- 🍎 HÀM THU THẬP QUẢ: TWEEN TỚI -> HÚT QUẢ -> STORE LIỀN THẬT NHANH RỒI MỚI QUA TRÁI KHÁC
+-- 🍎 HÀM THU THẬP QUẢ: TWEEN THẲNG TỚI HANDLE -> CHẠM NHẶT TỰ NHIÊN -> CẤT KHO (CHUẨN 100% STAR HUB SCRIPT.LUA)
+-- KHÔNG HÚT QUẢ, KHÔNG DI CHUYỂN HANDLE TRÁI, KHÔNG KẸT T-POSE
 -- ====================================================================
 local function smartTakeAndStoreFruit(fruitData)
     if not fruitData or not fruitData.Object then
         return "no"
     end
 
-    local targetPart = fruitData.RootPart or getFruitRoot(fruitData.Object)
+    local targetPart = fruitData.RootPart or fruitData.Handle or getFruitRoot(fruitData.Object)
     if not targetPart then
         return "no"
     end
@@ -2233,61 +2425,67 @@ local function smartTakeAndStoreFruit(fruitData)
     local fruitPos = targetPart.Position
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then
-        return "no"
+        local t0 = tick()
+        repeat
+            task.wait(0.1)
+            char = LocalPlayer.Character
+        until (char and char:FindFirstChild("HumanoidRootPart")) or (tick() - t0 > 5)
+    end
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        return "retry"
     end
 
     local hrp = char.HumanoidRootPart
     local hum = char:FindFirstChildOfClass("Humanoid")
     local startDist = (hrp.Position - fruitPos).Magnitude
 
-    print(string.format("[AutoFruit] 🍎 Đang tiếp cận: %s [%s] (Khoảng cách: %.1f studs)...", fruitData.Name or "Unknown", fruitData.Rarity or "Unknown", startDist))
-    setHUDStatus("taking fruit")
+    print(string.format("[AutoFruit] 🍎 Auto Tween to Fruit: %s [%s] (Khoảng cách: %.1f studs)...", fruitData.Name or "unknown", fruitData.Rarity or "unknown", startDist))
+    setHUDStatus("collect fruit")
     setHUDFruit(fruitData.Info)
 
-    -- Bay lơ lửng ngay phía trên quả 2 studs (tránh va chạm nền đất)
-    local targetY = math.max(fruitPos.Y + 2.0, 18)
-    local targetCF = CFrame.new(fruitPos.X, targetY, fruitPos.Z)
+    -- 1. Tween tới gần quả bằng _tp chuẩn Star Hub
+    _tp(targetPart.CFrame)
 
-    -- 1. Tween chuẩn 100% script.lua (Tốc độ 300, Stepped noclip bypass xuyên núi/tường)
-    tweenToFruit(targetCF, 300)
+    -- Chờ tween bay đến cự ly Settings.CollectDistance (10 studs) hoặc hoàn thành
+    local maxWait = math.clamp(startDist / Settings.TweenSpeed + 4, 3, 35)
+    local tWait = tick()
+    while shouldTween and currentTween and (tick() - tWait < maxWait) do
+        char = plr.Character
+        hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
+        if not hrp or not targetPart.Parent then break end
+        local d = (targetPart.Position - hrp.Position).Magnitude
+        if d <= Settings.CollectDistance then
+            break
+        end
+        task.wait(0.08)
+    end
 
-    char = LocalPlayer.Character or char
+    char = plr.Character or char
     hrp = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")) or hrp
     hum = char and char:FindFirstChildOfClass("Humanoid") or hum
 
-    -- 2. HÚT QUẢ VÀO TÚI (VẪN ĐANG GIỮ OnFarm = true, hoàn toàn miễn nhiễm va chạm và không bị giật lùi)
-    print(string.format("[AutoFruit] Đã áp sát %s! Đang hút và nhặt vào túi...", fruitData.Name or "Fruit"))
-    local collectedFruitTool = nil
-
-    for attempt = 1, 5 do
+    -- 2. Khi đã trong cự ly CollectDistance: Đưa root của quả chạm vào character (chuẩn Star Hub gốc)
+    if char and hrp and targetPart and targetPart.Parent then
         pcall(function()
-            if targetPart and targetPart:IsA("BasePart") then
-                targetPart.CFrame = hrp.CFrame
-                targetPart.AssemblyLinearVelocity = Vector3.zero
-            end
-            if fruitData.Object:IsA("Tool") and fruitData.Object:FindFirstChild("Handle") then
-                fruitData.Object.Handle.CFrame = hrp.CFrame
-                fruitData.Object.Handle.AssemblyLinearVelocity = Vector3.zero
-            end
-            -- collectFruits chuẩn 100% từ script.lua dòng 1567: Hút mọi Fruit Handle vào HumanoidRootPart
-            collectFruits(true)
+            targetPart.CFrame = hrp.CFrame
         end)
+    end
 
-        if firetouchinterest and targetPart then
-            pcall(function()
-                firetouchinterest(hrp, targetPart, 0)
-                task.wait(0.02)
-                firetouchinterest(hrp, targetPart, 1)
-            end)
-        end
+    -- Dừng tween ngay sau khi đã tiếp cận quả
+    stopTween()
 
-        if fruitData.Object:IsA("Tool") and hum then
-            pcall(function() hum:EquipTool(fruitData.Object) end)
-        end
+    if firetouchinterest and targetPart and targetPart.Parent and hrp then
+        pcall(function()
+            firetouchinterest(hrp, targetPart, 0)
+            task.wait(0.01)
+            firetouchinterest(hrp, targetPart, 1)
+        end)
+    end
 
-        task.wait(0.08)
-
-        -- Tìm tool mới trong Backpack hoặc Character
+    -- 3. Chờ tối đa 1.5 giây để quả vào Backpack hoặc Character
+    local collectedFruitTool = nil
+    local tCheck = tick()
+    while (tick() - tCheck < 1.5) do
         if LocalPlayer:FindFirstChild("Backpack") then
             for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
                 if item:FindFirstChild("EatRemote", true) or string.find(string.lower(item.Name), "fruit") then
@@ -2306,30 +2504,46 @@ local function smartTakeAndStoreFruit(fruitData)
         end
 
         if collectedFruitTool then break end
+
+        if hrp and targetPart and targetPart.Parent then
+            pcall(function() targetPart.CFrame = hrp.CFrame end)
+            if firetouchinterest then
+                pcall(function()
+                    firetouchinterest(hrp, targetPart, 0)
+                    task.wait(0.01)
+                    firetouchinterest(hrp, targetPart, 1)
+                end)
+            end
+        end
+        task.wait(0.08)
     end
 
-    -- 3. XÁC ĐỊNH TÊN TRÁI THẬT TỪ TOOL VỪA NHẶT (CHÍNH XÁC 100%, KHÔNG CÒN DEVIL FRUIT)
+    -- 4. Cất sạch trái vào kho (UpdStFruit chuẩn 100% Star Hub script.lua)
+    UpdStFruit()
+
+    -- 5. GIẢI PHÓNG TRẠNG THÁI BAY VÀ TWEEN NGAY LẬP TỨC: NHÂN VẬT HẠ ĐẤT BÌNH THƯỜNG, HẾT T-POSE!
+    shouldTween = false
+    getgenv().OnFarm = false
+    restoreCharacterMovement()
+
+    -- 3. XÁC ĐỊNH TÊN TRÁI THẬT TỪ TOOL VỪA NHẶT (CHÍNH XÁC 100%, FIX TRIỆT ĐỂ LỖI DEVIL FRUIT)
     if collectedFruitTool then
         fruitData.CollectedTool = collectedFruitTool
-        local eatRemote = collectedFruitTool:FindFirstChild("EatRemote", true)
-        local origAttr = eatRemote and eatRemote.Parent and eatRemote.Parent:GetAttribute("OriginalName")
         local realInfo = identifyFruit(collectedFruitTool)
-        if realInfo and realInfo.DisplayName ~= "Devil Fruit" then
+        if realInfo and realInfo.DisplayName ~= "unknown" and realInfo.DisplayName ~= "Devil Fruit" then
             fruitData.Info = realInfo
             fruitData.Name = realInfo.DisplayName
             fruitData.Rarity = realInfo.Rarity
             setHUDFruit(realInfo)
             print(string.format("[AutoFruit] ✅ ĐÃ NHẶT THÀNH CÔNG: %s [%s]!", realInfo.DisplayName, realInfo.Rarity))
         end
-    end
 
-    -- 4. STORE LIỀN THẬT NHANH RỒI MỚI QUA TRÁI TIẾP THEO (UpdStFruit chuẩn 100% script.lua)
-    print(string.format("[AutoFruit] 📦 Đang cất ngay %s vào kho lưu trữ...", fruitData.Name or "Fruit"))
-    local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
-    local storeRes = "no"
+        -- 4. STORE LIỀN THẬT NHANH RỒI MỚI QUA TRÁI TIẾP THEO (UpdStFruit chuẩn 100% script.lua)
+        print(string.format("[AutoFruit] 📦 Đang cất ngay %s vào kho lưu trữ...", fruitData.Name or "Fruit"))
+        local commF = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+        local storeRes = "no"
 
-    if commF then
-        if collectedFruitTool then
+        if commF then
             local eatRemote = collectedFruitTool:FindFirstChild("EatRemote", true)
             local origName = (eatRemote and eatRemote.Parent and eatRemote.Parent:GetAttribute("OriginalName")) 
                              or collectedFruitTool:GetAttribute("OriginalName") 
@@ -2344,45 +2558,61 @@ local function smartTakeAndStoreFruit(fruitData)
                     storeRes = "full"
                 end
             end
+
+            -- Cất sạch bằng UpdStFruit chuẩn 100% script.lua dòng 1554
+            local extraStored = UpdStFruit()
+            if extraStored then storeRes = "yes" end
         end
 
-        -- Cất sạch bằng UpdStFruit chuẩn 100% script.lua dòng 1554
-        local extraStored = UpdStFruit()
-        if extraStored then storeRes = "yes" end
-    end
-
-    if collectedFruitTool and (not collectedFruitTool.Parent or (collectedFruitTool.Parent ~= LocalPlayer.Backpack and collectedFruitTool.Parent ~= LocalPlayer.Character)) then
-        storeRes = "yes"
-    end
-
-    -- Nếu kho đầy hoặc đã có trái này trong kho (Max 1) và tool vẫn trong túi/tay:
-    if storeRes ~= "yes" and collectedFruitTool and (collectedFruitTool.Parent == LocalPlayer.Backpack or collectedFruitTool.Parent == LocalPlayer.Character) then
-        storeRes = "full"
-        print(string.format("[AutoFruit] ⚠️ Kho đầy hoặc đã có sẵn trái %s trong rương lưu trữ (Max 1). Đã nhặt nhưng không thể cất!", fruitData.Name or "Fruit"))
-        if hum then
-            pcall(function() hum:UnequipTools() end)
+        if not collectedFruitTool.Parent or (collectedFruitTool.Parent ~= LocalPlayer.Backpack and collectedFruitTool.Parent ~= LocalPlayer.Character) then
+            storeRes = "yes"
         end
-    end
 
-    -- Đánh dấu trái đã xử lý xong để scanAllFruits không bao giờ quét lại hay freeze
-    ProcessedFruits[fruitData.Object] = true
-    if collectedFruitTool then
+        -- Nếu kho đầy hoặc đã có trái này trong kho (Max 1) và tool vẫn trong túi/tay:
+        if storeRes ~= "yes" and (collectedFruitTool.Parent == LocalPlayer.Backpack or collectedFruitTool.Parent == LocalPlayer.Character) then
+            storeRes = "full"
+            print(string.format("[AutoFruit] ⚠️ Kho đầy hoặc đã có sẵn trái %s trong rương lưu trữ (Max 1). Đã nhặt nhưng không thể cất!", fruitData.Name or "Fruit"))
+            if hum then
+                pcall(function() hum:UnequipTools() end)
+            end
+        end
+
+        -- Đánh dấu trái đã thu thập thành công
+        ProcessedFruits[fruitData.Object] = true
         ProcessedFruits[collectedFruitTool] = true
-    end
 
-    fruitData.StoreResult = storeRes
-    print(string.format("[AutoFruit] Hoàn tất cất kho: %s | Kết quả cất: %s", fruitData.Name or "Fruit", storeRes))
+        fruitData.StoreResult = storeRes
+        print(string.format("[AutoFruit] Hoàn tất cất kho: %s | Kết quả cất: %s", fruitData.Name or "Fruit", storeRes))
 
-    -- 5. XÓA ESP & HIGHLIGHT CHO TRÁI NÀY (Đã thu thập xong)
-    removeFruitESP(fruitData.Object)
-    if collectedFruitTool then
+        -- 5. XÓA ESP & HIGHLIGHT CHO TRÁI NÀY (Đã thu thập xong)
+        removeFruitESP(fruitData.Object)
         removeFruitESP(collectedFruitTool)
+
+        -- 6. GỬI DISCORD WEBHOOK CHO TRÁI NÀY
+        notifyFruitWebhook(fruitData, storeRes)
+
+        return storeRes
+    else
+        -- Kiểm tra xem quả có còn trong Workspace không
+        local stillExists = false
+        pcall(function()
+            if fruitData.Object and fruitData.Object.Parent and (fruitData.Object.Parent == Workspace or fruitData.Object:IsDescendantOf(Workspace)) then
+                stillExists = true
+            end
+        end)
+
+        if stillExists then
+            -- TUYỆT ĐỐI KHÔNG ĐÁNH DẤU PROCESSED KHI QUẢ VẪN CÒN TRONG MAP!
+            print(string.format("[AutoFruit] ⚠️ Chưa nhặt được %s nhưng quả vẫn còn trong map! Sẽ tiếp tục thử lại...", fruitData.Name or "Fruit"))
+            return "retry"
+        else
+            -- Quả đã biến mất khỏi Workspace (ai đó nhặt hoặc despawn)
+            print(string.format("[AutoFruit] ⚠️ Quả %s đã biến mất khỏi Workspace.", fruitData.Name or "Fruit"))
+            ProcessedFruits[fruitData.Object] = true
+            removeFruitESP(fruitData.Object)
+            return "no"
+        end
     end
-
-    -- 6. GỬI DISCORD WEBHOOK CHO TRÁI NÀY
-    notifyFruitWebhook(fruitData, storeRes)
-
-    return storeRes
 end
 
 -- ====================================================================
@@ -3046,7 +3276,7 @@ end
 
 -- Hàm thực thi Server Hop siêu tốc (API 4-9 người trước -> Remote -> Real Browser)
 local function executeServerHop()
-    setHUDStatus("hoping server")
+    setHUDStatus("hopping server")
     setHUDFruit(nil)
 
     local hopRound = 0
@@ -3131,43 +3361,66 @@ task.spawn(function()
     fixScreenAndCamera()
     print(string.format("[BloxFruits AutoFruit] ✅ Team: %s | Nhân vật đã sẵn sàng!", tostring(LocalPlayer.Team and LocalPlayer.Team.Name or "Ready")))
 
-    -- Chờ 1.5s để server stream đầy đủ các đối tượng và trái ác quỷ
-    task.wait(1.5)
-    fixScreenAndCamera()
-
-    -- BƯỚC 2: QUÉT SERVER TOÀN BỘ MAP & MỌI HÒN ĐẢO (CHỌN XONG TEAM MỚI SCAN!)
-    setHUDStatus("scanning server")
+    -- BƯỚC 2: CHỌN TEAM XONG -> ĐỢI 5S ĐỂ QUÉT KỸ LƯỠNG TOÀN BỘ MAP (NẾU KHÔNG CÓ TRÁI MỚI HOP)
+    -- Quét toàn bộ map y chang Star Hub, quét liên tục trong 5 giây để đợi server stream đầy đủ
+    print("[BloxFruits AutoFruit] 🔍 Đã pick team xong! Bắt đầu đợi 5s để quét kỹ lưỡng toàn bộ map...")
     setHUDFruit(nil)
-    print("[BloxFruits AutoFruit] 🔍 Bước 2: Bắt đầu quét nhanh toàn bộ map...")
 
-    local foundFruits = scanAllFruits()
+    local foundFruits = {}
+    local scanStartTime = tick()
+    local scanDuration = 5.0 -- 5 giây chờ scan
 
-    -- Nếu lần 1 chưa thấy, chờ 1.5s và quét lần 2 xác nhận chắc chắn
+    while (tick() - scanStartTime) < scanDuration do
+        local elapsed = tick() - scanStartTime
+        local secondsLeft = math.max(1, math.ceil(scanDuration - elapsed))
+
+        setHUDStatus(string.format("scanning server (%ds)", secondsLeft))
+        fixScreenAndCamera()
+
+        foundFruits = scanAllFruits()
+        if #foundFruits > 0 then
+            print(string.format("[BloxFruits AutoFruit] ⚡ ĐÃ TÌM THẤY %d TRÁI SAU %.1f GIÂY! DỪNG CHỜ VÀ TIẾN HÀNH THU THẬP NGAY!", #foundFruits, elapsed))
+            break
+        end
+
+        task.wait(0.5) -- Quét liên tục mỗi 0.5s (10 lượt quét toàn bộ map trong 5 giây)
+    end
+
+    -- Quét kiểm tra xác nhận chót nếu hết 5s
     if #foundFruits == 0 then
-        task.wait(1.5)
+        fixScreenAndCamera()
         foundFruits = scanAllFruits()
     end
 
     if #foundFruits > 0 then
         -- 🌟 SẮP XẾP ƯU TIÊN THEO ĐỘ HIẾM: TRÁI HIẾM HƠN SẼ ĐƯỢC NHẶT VÀ CẤT TRƯỚC!
         foundFruits = sortFruitsByRarity(foundFruits)
+        local topFruit = foundFruits[1]
 
-        print(string.format("[BloxFruits AutoFruit] ⚡ Xác nhận có %d trái trong server! Thứ tự thu thập ưu tiên:", #foundFruits))
+        -- ⚡ CẬP NHẬT TỨC THÌ LÊN HUD NGAY SAU KHI QUÉT XONG (BIẾT TRƯỚC DÙ NHẶT ĐƯỢC HAY KHÔNG!)
+        setHUDFruit(topFruit.Info)
+
+        print(string.format("[BloxFruits AutoFruit] ⚡ ĐÃ PHÁT HIỆN %d TRÁI TRONG SERVER! TRÁI ƯU TIÊN: %s [%s]", #foundFruits, topFruit.Name or "unknown", topFruit.Rarity or "unknown"))
         for idx, f in ipairs(foundFruits) do
-            print(string.format("   #%d: %s [%s]", idx, f.Name or "Unknown", f.Rarity or "Unknown"))
+            print(string.format("   👉 #%d: %s [%s]", idx, f.Name or "unknown", f.Rarity or "unknown"))
         end
 
         -- THU THẬP TẤT CẢ CÁC TRÁI: NHẶT -> STORE LIỀN THẬT NHANH -> RỒI MỚI QUA TRÁI TIẾP THEO
         for i, fruit in ipairs(foundFruits) do
             if fruit.Object and fruit.Object.Parent then
-                print(string.format("[BloxFruits AutoFruit] 🎯 Đang thu thập trái #%d/%d: %s [%s]...", i, #foundFruits, fruit.Name or "Unknown", fruit.Rarity or "Unknown"))
+                print(string.format("[BloxFruits AutoFruit] 🎯 Đang thu thập trái #%d/%d: %s [%s]...", i, #foundFruits, fruit.Name or "unknown", fruit.Rarity or "unknown"))
                 setHUDFruit(fruit.Info)
-                setHUDStatus("taking fruit")
+                setHUDStatus("collect fruit")
 
                 local storeRes = smartTakeAndStoreFruit(fruit)
+                if storeRes == "retry" and fruit.Object and fruit.Object.Parent then
+                    task.wait(0.5)
+                    print(string.format("[BloxFruits AutoFruit] 🔄 Thử lại thu thập trái %s...", fruit.Name or "Fruit"))
+                    smartTakeAndStoreFruit(fruit)
+                end
                 task.wait(0.25)
             else
-                print(string.format("[BloxFruits AutoFruit] ⚠️ Trái #%d (%s) không còn trong Workspace, bỏ qua.", i, fruit.Name or "Unknown"))
+                print(string.format("[BloxFruits AutoFruit] ⚠️ Trái #%d (%s) không còn trong Workspace, bỏ qua.", i, fruit.Name or "unknown"))
             end
         end
 
@@ -3180,8 +3433,12 @@ task.spawn(function()
             for _, fruit in ipairs(remaining) do
                 if fruit.Object and fruit.Object.Parent then
                     setHUDFruit(fruit.Info)
-                    setHUDStatus("taking fruit")
-                    smartTakeAndStoreFruit(fruit)
+                    setHUDStatus("collect fruit")
+                    local res = smartTakeAndStoreFruit(fruit)
+                    if res == "retry" and fruit.Object and fruit.Object.Parent then
+                        task.wait(0.5)
+                        smartTakeAndStoreFruit(fruit)
+                    end
                     task.wait(0.25)
                 end
             end
@@ -3195,20 +3452,19 @@ task.spawn(function()
 
         print("[BloxFruits AutoFruit] ✅ Đã nhặt và cất kho toàn bộ trái trong server! Đang hop server mới...")
         setHUDFruit(nil)
-        setHUDStatus("hoping server")
+        setHUDStatus("hopping server")
         executeServerHop()
     else
-        -- SERVER KHÔNG CÓ TRÁI NÀO -> TỰ ĐỘNG HOP SERVER NGAY LẬP TỨC (KHÔNG CHỜ ĐỢI LÂU!)
+        -- SERVER KHÔNG CÓ TRÁI NÀO SAU 5 GIÂY QUÉT KỸ -> TỰ ĐỘNG HOP SERVER
         shouldTween = false
         getgenv().OnFarm = false
         restoreCharacterMovement()
         clearAllFruitESPs()
 
-        print("[BloxFruits AutoFruit] ⚡ Server chắc chắn không có trái! Tự động hop server ngay lập tức...")
+        print("[BloxFruits AutoFruit] ⚠️ Đã quét kỹ lưỡng toàn bộ map trong 5s nhưng không có trái nào! Đang tự động hop server...")
         setHUDFruit(nil)
-        setHUDStatus("hoping server")
+        setHUDStatus("hopping server")
         executeServerHop()
     end
 end)
-
 print("[BloxFruits AutoFruit] Loaded - Kaitun HUD UI Active")
